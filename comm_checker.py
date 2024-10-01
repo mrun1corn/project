@@ -1,4 +1,3 @@
-# comm_checker.py
 from telegram import Update
 from telegram.ext import ContextTypes
 import json
@@ -29,7 +28,7 @@ def load_approved_users():
         with open('approved_users.json', 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        return []  # Return an empty list if the file doesn't exist
 
 # Save approved users to a JSON file
 def save_approved_users(users):
@@ -48,28 +47,20 @@ async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         save_command_states(command_states)  # Save updated states
         await update.message.reply_text(f"{command} command has been enabled.")
     else:
-        if update.effective_user.id == ADMIN_CHAT_ID:
-            await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
-        else:
-            await update.message.reply_text("Invalid command.")
+        await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
 
 async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Disable a command."""
     command = context.args[0] if context.args else None
     if command in command_states:
         if command_states[command] is False:
-            # If the command is already disabled
             await update.message.reply_text(f"The {command} command is already disabled.")
         else:
-            # Disable the command
             command_states[command] = False
             save_command_states(command_states)  # Save updated states
             await update.message.reply_text(f"{command} command has been disabled.")
     else:
-        if update.effective_user.id == ADMIN_CHAT_ID:
-            await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
-        else:
-            await update.message.reply_text("Invalid command.")
+        await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
 
 async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revoke a user's approval to access commands."""
@@ -101,7 +92,7 @@ async def check_user_approval(user_id) -> bool:
     """Check if a user is approved before allowing commands."""
     if user_id == ADMIN_CHAT_ID:  # Check if the user is admin
         return True
-    return user_id in approved_users
+    return user_id in approved_users  # Check if the user is in the approved list
 
 async def check_command_enabled(command: str) -> bool:
     """Check if a command is enabled."""
