@@ -12,7 +12,6 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/speedtest - to show the speed of the bot hosted server\n"
             "/ping - to show the respons time from the hosted server\n"
             "/music - to listen music\n"
-            "/video - to play video\n"
         )
         await update.message.reply_text(help_text)
     except Exception as e:

@@ -1,7 +1,7 @@
 # config.py
 
 # Replace with your actual bot token
-BOT_TOKEN = '6233443371:AAEMU3svmTajA0wnLEKjQHa4cXmmbwtfFHY'
+BOT_TOKEN = '7983258715:AAGiO2xAwLdGMLG163PXFfspnLhKiW5NYlg'
 
 # Replace with your actual admin chat ID
 ADMIN_CHAT_ID = 1436979843  # Replace with your actual chat ID
