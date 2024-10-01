@@ -1,5 +1,4 @@
 import os
-import time
 import yt_dlp
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -20,82 +19,86 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     song_name = " ".join(context.args)
-    progress_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Searching for: {song_name}")
+    progress_message = await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text=f"Searching for: {song_name}", 
+        reply_to_message_id=update.message.message_id
+    )
 
-    # Configure yt-dlp options to download the best available audio format directly (without conversion)
-    ydl_opts = {
-        'format': 'bestaudio/best',  # Download the best available audio format
-        'outtmpl': f'downloads/%(title)s.%(ext)s',  # Save the file with title and extension
-        'default_search': 'ytsearch',
+    # yt-dlp options for getting metadata without downloading
+    ydl_opts_info = {
+        'format': 'bestaudio/best',
         'noplaylist': True,
-        'progress_hooks': [lambda d: update_progress(progress_message, d, context)],  # Progress update
-        'concurrent_frag_downloads': 3,
-        'http_chunk_size': 1024 * 1024,  # 1 MB chunks
-        'timeout': 60,  # Timeout of 60 seconds
-        'retries': 3,   # Retry if download fails
+        'quiet': True,
+        'skip_download': True,
+        'default_search': 'ytsearch',  # Use YouTube search by default
     }
 
     try:
-        # Search for the audio and download
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([song_name])
-        
-        # Notify the user after download
-        await progress_message.edit_text("Download complete! Sending audio...")
+        # Get metadata about the song (including file size)
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            info_dict = ydl.extract_info(song_name, download=False)
 
-        # Find the downloaded audio file (it could be .webm or .m4a, etc.)
-        downloaded_file = next((f for f in os.listdir('downloads') if f.endswith(('.webm', '.m4a', '.opus'))), None)
-        if downloaded_file:
-            # Send the audio file without the extension in the filename
-            file_title = os.path.splitext(downloaded_file)[0]  # Get the file title without the extension
-            await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloads/{downloaded_file}', 'rb'), 
-                                          title=file_title)  # Using 'title' to hide extension
-            os.remove(f'downloads/{downloaded_file}')  # Clean up after sending
-        else:
-            await progress_message.edit_text("Error: Audio file not found after download.")
-    
+        if 'entries' in info_dict:
+            # Extract the first result from the search
+            info_dict = info_dict['entries'][0]
+
+        # Extract audio format and file size information
+        if 'formats' in info_dict:
+            audio_format = next((f for f in info_dict['formats'] if f['format_id'] == '251'), None)
+
+            if not audio_format:
+                await progress_message.edit_text("Error: No suitable audio format found.")
+                return
+
+            file_size = audio_format.get('filesize', None)
+            duration = info_dict.get('duration', 0)  # Duration in seconds
+            bitrate = audio_format.get('tbr', None)  # Average bitrate in kbps
+
+            # Estimate file size if missing
+            if not file_size and bitrate and duration:
+                file_size = (bitrate * 1000 / 8) * duration  # Estimate based on bitrate and duration
+
+            if not file_size:
+                await progress_message.edit_text("Error: Could not retrieve file size.")
+                return
+
+            # Check if the file exceeds the 50 MB limit
+            if file_size > 50 * 1024 * 1024:  # 50 MB limit
+                await progress_message.edit_text(f"The audio file size is: {file_size / (1024 * 1024):.2f} MB. Please use externel downloader.")
+                return
+
+            # Now proceed to download the file since size is acceptable
+            await progress_message.edit_text(f"File size is acceptable. Downloading...")
+
+            # Download audio using yt-dlp
+            ydl_opts_download = {
+                'format': 'bestaudio/best',
+                'outtmpl': f'downloads/%(title)s.%(ext)s',
+                'noplaylist': True,
+                'concurrent_frag_downloads': 3,
+                'http_chunk_size': 1024 * 1024,  # 1 MB chunks
+                'timeout': 60,
+                'retries': 3,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
+                ydl.download([info_dict['webpage_url']])
+
+            # Send the downloaded audio file
+            downloaded_file = next((f for f in os.listdir('downloads') if f.endswith(('.webm', '.m4a', '.opus'))), None)
+            if downloaded_file:
+                file_title = os.path.splitext(downloaded_file)[0]
+                await context.bot.send_audio(
+                    chat_id=update.effective_chat.id, 
+                    audio=open(f'downloads/{downloaded_file}', 'rb'), 
+                    title=file_title,
+                    reply_to_message_id=update.message.message_id  # Reply to original command
+                )
+                os.remove(f'downloads/{downloaded_file}')  # Clean up after sending
+            else:
+                await progress_message.edit_text("Error: Audio file not found after download.")
+
     except Exception as e:
-        await progress_message.edit_text(f"Could not find or download the audio: {e}")
+        await progress_message.edit_text(f"Error occurred: {e}")
         print(f"Error in play_audio: {e}")
-
-# Enhanced progress update function
-last_update_time = 0
-
-def update_progress(progress_message, d, context):
-    global last_update_time
-    current_time = time.time()
-
-    if d['status'] == 'downloading':
-        if 'downloaded_bytes' in d and 'total_bytes' in d and d['total_bytes'] > 0:
-            percent = d['downloaded_bytes'] / d['total_bytes'] * 100
-            
-            # Ensure meaningful updates: Update only when progress is significant and after 2 seconds
-            if percent > 1 and (current_time - last_update_time) > 2:
-                elapsed_time = current_time - d.get('start_time', current_time)
-                
-                # Calculate estimated remaining time only if there's progress
-                if d['downloaded_bytes'] > 0:
-                    estimated_total_time = elapsed_time / (d['downloaded_bytes'] / d['total_bytes'])
-                    estimated_remaining_time = estimated_total_time - elapsed_time
-
-                    # Format the remaining time
-                    remaining_minutes, remaining_seconds = divmod(estimated_remaining_time, 60)
-                    remaining_time_str = f"{int(remaining_minutes)}m {int(remaining_seconds)}s" if estimated_remaining_time > 0 else "Calculating..."
-
-                    # Calculate download speed
-                    download_speed = d['downloaded_bytes'] / elapsed_time if elapsed_time > 0 else 0
-                    download_speed_str = f"{download_speed / (1024 * 1024):.2f} MB/s" if download_speed > 0 else "Calculating..."
-
-                    # Update progress message with formatted data
-                    context.application.create_task(
-                        progress_message.edit_text(
-                            f"Downloading... {percent:.2f}%\n"
-                            f"Download Speed: {download_speed_str}\n"
-                            f"Estimated time remaining: {remaining_time_str}"
-                        )
-                    )
-                    last_update_time = current_time
-
-    elif d['status'] == 'finished':
-        context.application.create_task(progress_message.edit_text("Download finished!"))
-
