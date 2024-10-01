@@ -6,6 +6,7 @@ import speedtest as speedtest_lib  # Renamed the imported speedtest library
 import subprocess
 import os
 import sys
+import platform
 from comm_checker import command_states, check_user_approval 
 from config import ADMIN_CHAT_ID
 
@@ -34,33 +35,55 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not await check_user_approval(update.effective_user.id):  # Check if the user is approved
         await update.message.reply_text("You are not approved to use this command.")
         return
-        
+
     try:
         # Get system information
         cpu_usage = psutil.cpu_percent(interval=1)
         memory_info = psutil.virtual_memory()
         swap_info = psutil.swap_memory()
         disk_info = psutil.disk_usage('/')
-        
+        cpu_count = psutil.cpu_count(logical=False)  # Physical cores
+        cpu_count_logical = psutil.cpu_count(logical=True)  # Logical CPUs
+        cpu_freq = psutil.cpu_freq().current  # CPU frequency
+        cpu_model = platform.processor()  # CPU model
+
+        # System information
+        system = platform.system()  # Operating System
+        node = platform.node()  # System name (hostname)
+        release = platform.release()  # OS version
+        architecture = platform.architecture()[0]  # Architecture (32-bit/64-bit)
+
         # Prepare response message
         response = (
-            f"**System Status**\n"
-            f"🖥️ **CPU Usage:** {cpu_usage}%\n"
-            f"🧠 **Memory Usage:** {memory_info.percent}% "
+            f"*System Status*\n"
+            f"🖥️ *System:* {system} {release} ({architecture})\n"
+            f"🔧 *Hostname:* {node}\n"
+            f"⚙️ *CPU Model:* `{cpu_model}`\n"
+            f"🧮 *Physical Cores:* {cpu_count}\n"
+            f"🔢 *Logical CPUs:* {cpu_count_logical}\n"
+            f"🔄 *CPU Frequency:* {cpu_freq:.2f} MHz\n"
+            f"📊 *CPU Usage:* {cpu_usage}%\n"
+            f"🧠 *Memory Usage:* {memory_info.percent}% "
             f"({memory_info.used / (1024 ** 2):.2f} MB used of {memory_info.total / (1024 ** 2):.2f} MB)\n"
-            f"🔄 **Swap Memory:** {swap_info.percent}% "
+            f"🔄 *Swap Memory Usage:* {swap_info.percent}% "
             f"({swap_info.used / (1024 ** 2):.2f} MB used of {swap_info.total / (1024 ** 2):.2f} MB)\n"
-            f"💾 **Disk Usage:** {disk_info.percent}% "
+            f"💾 *Disk Usage:* {disk_info.percent}% "
             f"({disk_info.used / (1024 ** 3):.2f} GB used of {disk_info.total / (1024 ** 3):.2f} GB)\n"
         )
 
         # Check for battery info and append if available
         battery = psutil.sensors_battery()
         if battery:
-            battery_status = f"🔋 **Battery Status:** {battery.percent}% {'🔌' if battery.power_plugged else '⚡'}\n"
+            battery_status = f"🔋 *Battery Status:* {battery.percent}% {'🔌' if battery.power_plugged else '⚡'}\n"
             response += battery_status  # Append battery status to response
 
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=response, parse_mode='Markdown')
+        # Escape special characters in response for MarkdownV2
+        response = response.replace(".", "\\.").replace("-", "\\-").replace("_", "\\_").replace("*", "\\*") \
+                           .replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)") \
+                           .replace("~", "\\~").replace("`", "\\`")
+
+        # Send the response using MarkdownV2
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=response, parse_mode='MarkdownV2')
     except Exception as e:
         print(f"Error in system_status: {e}")
 
