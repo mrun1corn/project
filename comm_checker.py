@@ -14,7 +14,8 @@ def load_command_states():
             'reboot': True,
             'speedtest': True,
             'ping': True,
-            'music': True
+            'music': True,
+            'shell': True
         }
 
 # Save command states to a JSON file

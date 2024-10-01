@@ -152,17 +152,63 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.edit_text("Error performing ping. Please check your hostname.")
         print(f"Error in ping: {e}")
 
+async def shell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Execute a shell command and return the output."""
+    user_id = update.effective_user.id  # Get user_id here
+
+    # Check if command is enabled and if the user is not an admin
+    if not command_states.get('shell', True) and user_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("The shell command is currently disabled.")
+        return
+
+    if user_id != ADMIN_CHAT_ID:  # If the user is not admin
+        await update.message.reply_text("You do not have permission to use this command.")
+        return
+
+    if len(context.args) == 0:
+        await update.message.reply_text('Usage: /shell <command>')
+        return
+
+    command = ' '.join(context.args)  # Join the arguments to form the full command
+    message = await context.bot.send_message(chat_id=update.effective_chat.id, text="Executing command...")
+
+    try:
+        # Execute the command and capture the output
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        
+        # Check the result and prepare the response
+        if result.returncode == 0:
+            output = result.stdout
+        else:
+            output = result.stderr
+
+        # Limit the output length for Telegram messages
+        if len(output) > 4096:
+            output = output[:4096] + "\n... (output truncated)"
+        
+        await message.edit_text(f"Command executed successfully:\n```\n{output}\n```", parse_mode='MarkdownV2')
+    except Exception as e:
+        await message.edit_text("Error executing command. Please check your command syntax.")
+        print(f"Error in shell command execution: {e}")
+
+
 async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reboot the bot."""
-    if not command_states.get('reboot', True) and update.effective_user.id != ADMIN_CHAT_ID:  # Check if command is disabled for non-admins
+    user_id = update.effective_user.id
+
+    # Check if command is enabled and if the user is not an admin
+    if not command_states.get('reboot', True) and user_id != ADMIN_CHAT_ID:
         await update.message.reply_text("The reboot command is currently disabled.")
+        return
+
+    if user_id != ADMIN_CHAT_ID:  # If the user is not admin
+        await update.message.reply_text("You do not have permission to use this command.")
         return
 
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Rebooting bot... Please wait...")
 
-    # Replaces the current process with a new one, ensuring the bot runs with the latest changes
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="The bot is restarting with the latest changes! 🎉")
-    
-    # Restart the bot by replacing the current process with a new one
+    # Replaces the current process with a new one
     os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="The bot is restarting with the latest changes! 🎉")
 

@@ -16,12 +16,16 @@ def calculate_subnet(ip, subnet_mask):
 
 async def subnet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        if len(context.args) != 2:
-            await update.message.reply_text('Usage: /subnet <ip> <subnet_mask> or ip/cidr')
+        if len(context.args) != 2 and len(context.args) != 1:
+            await update.message.reply_text('Usage: /subnet <ip> <subnet_mask> or <ip/cidr>')
             return
 
-        ip = context.args[0]
-        subnet_mask = context.args[1]
+        if len(context.args) == 1:
+            ip = context.args[0].split('/')[0]
+            subnet_mask = context.args[0].split('/')[1] if '/' in context.args[0] else None
+        else:
+            ip = context.args[0]
+            subnet_mask = context.args[1]
 
         result = calculate_subnet(ip, subnet_mask)
 
