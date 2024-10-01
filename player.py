@@ -67,9 +67,9 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     await progress_message.edit_text("Error: Could not retrieve file size.")
                     return
 
-                # Check if the file exceeds the 50 MB limit
-                if file_size > 50 * 1024 * 1024:  # 50 MB limit
-                    await progress_message.edit_text(f"The audio file exceeds 50 MB (size: {file_size / (1024 * 1024):.2f} MB) and cannot be downloaded.")
+                # Check if the file exceeds the 20 MB limit
+                if file_size > 20 * 1024 * 1024:  # 20 MB limit
+                    await progress_message.edit_text(f"The audio file size is: {file_size / (1024 * 1024):.2f} MB. Please use externel downloader.")
                     return
 
                 # Now proceed to download the file since size is acceptable
