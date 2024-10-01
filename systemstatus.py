@@ -134,10 +134,12 @@ async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not command_states.get('reboot', True) and update.effective_user.id != ADMIN_CHAT_ID:  # Check if command is disabled for non-admins
         await update.message.reply_text("The reboot command is currently disabled.")
         return
+
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Rebooting bot... Please wait...")
 
-    # Use subprocess to start a new process
-    subprocess.Popen([sys.executable] + sys.argv)  # Start a new instance of the bot
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="The bot has been restarted successfully! 🎉")
+    # Replaces the current process with a new one, ensuring the bot runs with the latest changes
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="The bot is restarting with the latest changes! 🎉")
+    
+    # Restart the bot by replacing the current process with a new one
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    os._exit(0)  # Exit the current process to ensure the bot restarts cleanly
