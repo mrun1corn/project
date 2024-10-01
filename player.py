@@ -3,12 +3,18 @@ import time
 import yt_dlp
 from telegram import Update
 from telegram.ext import ContextTypes
-from comm_checker import command_states
+from comm_checker import command_states, check_user_approval  # Make sure to import check_user_approval
 
 async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Check if the user is approved
+    if not await check_user_approval(update.effective_user.id):
+        await update.message.reply_text("You are not approved to use this command.")
+        return
+
     if not command_states['music']:
         await update.message.reply_text("The music command is currently disabled.")
-        return
+        return    
+
     if len(context.args) == 0:
         await update.message.reply_text("Usage: /music <song_name>")
         return

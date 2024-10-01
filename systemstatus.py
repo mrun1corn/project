@@ -6,12 +6,14 @@ import speedtest as speedtest_lib  # Renamed the imported speedtest library
 import subprocess
 import os
 import sys
-from comm_checker import command_states
+from comm_checker import command_states, check_user_approval 
+from config import ADMIN_CHAT_ID
 
 # Global variable to keep track of bot start time
 bot_start_time = time.time()
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the current status and uptime of the bot."""
     try:
         # Calculate uptime
         uptime = time.time() - bot_start_time
@@ -28,6 +30,11 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         print(f"Error in bot_status: {e}")
 
 async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the current system status including CPU, memory, and disk usage."""
+    if not await check_user_approval(update.effective_user.id):  # Check if the user is approved
+        await update.message.reply_text("You are not approved to use this command.")
+        return
+        
     try:
         # Get system information
         cpu_usage = psutil.cpu_percent(interval=1)
@@ -57,9 +64,12 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         print(f"Error in system_status: {e}")
 
-
 async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not command_states['speedtest']:
+    """Conduct a speed test and send the results."""
+    if not await check_user_approval(update.effective_user.id):  # Check if the user is approved
+        await update.message.reply_text("You are not approved to use this command.")
+        return
+    if not command_states.get('speedtest', True) and update.effective_user.id != ADMIN_CHAT_ID:  # Check if command is disabled for non-admins
         await update.message.reply_text("The speedtest command is currently disabled.")
         return
 
@@ -89,7 +99,11 @@ async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         print(f"Error in speedtest: {e}")
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not command_states['ping']:
+    """Ping a hostname and send the results."""
+    if not await check_user_approval(update.effective_user.id):  # Check if the user is approved
+        await update.message.reply_text("You are not approved to use this command.")
+        return
+    if not command_states.get('ping', True) and update.effective_user.id != ADMIN_CHAT_ID:  # Check if command is disabled for non-admins
         await update.message.reply_text("The ping command is currently disabled.")
         return
     
@@ -102,10 +116,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         # Check the platform and set parameters accordingly
-        if os.name == 'nt':  # Windows
-            param = '-n'  # Windows uses -n
-        else:  # Unix/Linux
-            param = '-c'  # Linux uses -c
+        param = '-n' if os.name == 'nt' else '-c'  # Windows uses -n, Unix/Linux uses -c
         
         result = subprocess.run(['ping', param, '4', hostname], capture_output=True, text=True)
 
@@ -118,11 +129,11 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.edit_text("Error performing ping. Please check your hostname.")
         print(f"Error in ping: {e}")
 
-
 async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not command_states['speedtest']:
-        await update.message.reply_text("The speedtest command is currently disabled.")
-        return    
+    """Reboot the bot."""
+    if not command_states.get('reboot', True) and update.effective_user.id != ADMIN_CHAT_ID:  # Check if command is disabled for non-admins
+        await update.message.reply_text("The reboot command is currently disabled.")
+        return
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Rebooting bot... Please wait...")
 
     # Use subprocess to start a new process
@@ -130,4 +141,3 @@ async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id=update.effective_chat.id, text="The bot has been restarted successfully! 🎉")
 
     os._exit(0)  # Exit the current process to ensure the bot restarts cleanly
-

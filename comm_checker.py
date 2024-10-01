@@ -1,44 +1,108 @@
+# comm_checker.py
 from telegram import Update
 from telegram.ext import ContextTypes
-from config import ADMIN_CHAT_ID  # Import admin chat ID
+import json
+from config import ADMIN_CHAT_ID
 
-command_states = {
-    'speedtest': True,
-    'ping': True,
-    'music': True,
-    'reboot': True
-}
+# Load command states from a JSON file
+def load_command_states():
+    try:
+        with open('command_states.json', 'r') as f:
+            data = json.load(f)
+            return data.get('command_states', {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {
+            'reboot': True,
+            'speedtest': True,
+            'ping': True,
+            'music': True
+        }
+
+# Save command states to a JSON file
+def save_command_states(states):
+    with open('command_states.json', 'w') as f:
+        json.dump({'command_states': states}, f)
+
+# Load approved users from a JSON file
+def load_approved_users():
+    try:
+        with open('approved_users.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+# Save approved users to a JSON file
+def save_approved_users(users):
+    with open('approved_users.json', 'w') as f:
+        json.dump(users, f)
+
+# Global variables to keep track of command states and approved users
+command_states = load_command_states()
+approved_users = load_approved_users()
 
 async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != ADMIN_CHAT_ID:  # Check user ID instead
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="You don't have permission to use this command.")
-        return
-
-    if len(context.args) != 1:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text='Usage: /enable <command>')
-        return
-
-    command = context.args[0].strip('!')
-
+    """Enable a command."""
+    command = context.args[0] if context.args else None
     if command in command_states:
         command_states[command] = True
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"{command} has been enabled.")
+        save_command_states(command_states)  # Save updated states
+        await update.message.reply_text(f"{command} command has been enabled.")
     else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Command '{command}' not found.")
+        if update.effective_user.id == ADMIN_CHAT_ID:
+            await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
+        else:
+            await update.message.reply_text("Invalid command.")
 
 async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != ADMIN_CHAT_ID:  # Check user ID instead
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="You don't have permission to use this command.")
-        return
-
-    if len(context.args) != 1:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text='Usage: /disable <command>')
-        return
-
-    command = context.args[0].strip('!')
-
+    """Disable a command."""
+    command = context.args[0] if context.args else None
     if command in command_states:
-        command_states[command] = False
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"{command} has been disabled.")
+        if command_states[command] is False:
+            # If the command is already disabled
+            await update.message.reply_text(f"The {command} command is already disabled.")
+        else:
+            # Disable the command
+            command_states[command] = False
+            save_command_states(command_states)  # Save updated states
+            await update.message.reply_text(f"{command} command has been disabled.")
     else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Command '{command}' not found.")
+        if update.effective_user.id == ADMIN_CHAT_ID:
+            await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
+        else:
+            await update.message.reply_text("Invalid command.")
+
+async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Revoke a user's approval to access commands."""
+    if update.message.reply_to_message:
+        user_id = update.message.reply_to_message.from_user.id
+        if user_id in approved_users:
+            approved_users.remove(user_id)  # Remove user from the approved list
+            save_approved_users(approved_users)  # Save updated approved users
+            await update.message.reply_text(f"User {user_id} has been revoked from access.")
+        else:
+            await update.message.reply_text("This user is not approved.")
+    else:
+        await update.message.reply_text("Please reply to the user's message to revoke their approval.")
+
+async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Approve a user to access all commands."""
+    if update.message.reply_to_message:
+        user_id = update.message.reply_to_message.from_user.id
+        if user_id not in approved_users:
+            approved_users.append(user_id)  # Add user to the approved list
+            save_approved_users(approved_users)  # Save approved users
+            await update.message.reply_text(f"User {user_id} has been approved.")
+        else:
+            await update.message.reply_text("This user is already approved.")
+    else:
+        await update.message.reply_text("Please reply to the user's message to approve them.")
+
+async def check_user_approval(user_id) -> bool:
+    """Check if a user is approved before allowing commands."""
+    if user_id == ADMIN_CHAT_ID:  # Check if the user is admin
+        return True
+    return user_id in approved_users
+
+async def check_command_enabled(command: str) -> bool:
+    """Check if a command is enabled."""
+    return command_states.get(command, True)  # Default to enabled if not found
