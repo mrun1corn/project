@@ -3,7 +3,7 @@ import time
 import yt_dlp
 from telegram import Update
 from telegram.ext import ContextTypes
-from comm_checker import command_states, check_user_approval  # Make sure to import check_user_approval
+from comm_checker import command_states, check_user_approval
 
 async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Check if the user is approved
@@ -46,8 +46,10 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Find the downloaded audio file (it could be .webm or .m4a, etc.)
         downloaded_file = next((f for f in os.listdir('downloads') if f.endswith(('.webm', '.m4a', '.opus'))), None)
         if downloaded_file:
-            # Send the audio file as it is
-            await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloads/{downloaded_file}', 'rb'))
+            # Send the audio file without the extension in the filename
+            file_title = os.path.splitext(downloaded_file)[0]  # Get the file title without the extension
+            await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloads/{downloaded_file}', 'rb'), 
+                                          title=file_title)  # Using 'title' to hide extension
             os.remove(f'downloads/{downloaded_file}')  # Clean up after sending
         else:
             await progress_message.edit_text("Error: Audio file not found after download.")
@@ -59,7 +61,7 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # Enhanced progress update function
 last_update_time = 0
 
-def update_progress(progress_message, d, context):  # Accept context as an argument
+def update_progress(progress_message, d, context):
     global last_update_time
     current_time = time.time()
 
@@ -96,5 +98,4 @@ def update_progress(progress_message, d, context):  # Accept context as an argum
 
     elif d['status'] == 'finished':
         context.application.create_task(progress_message.edit_text("Download finished!"))
-    elif d['status'] == 'postprocessing':
-        context.application.create_task(progress_message.edit_text("Converting audio..."))
+
