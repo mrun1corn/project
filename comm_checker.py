@@ -43,6 +43,9 @@ approved_users = load_approved_users()
 
 async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Enable a command."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return  # Do not respond to non-admin users
+    
     command = context.args[0] if context.args else None
     if command in command_states:
         command_states[command] = True
@@ -53,10 +56,13 @@ async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Disable a command."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return  # Do not respond to non-admin users
+
     command = context.args[0] if context.args else None
     if command in command_states:
         if command_states[command] is False:
-            await update.message.reply_text(f"The {command} command is already disabled.")
+            return  # Do not respond if the command is already disabled
         else:
             command_states[command] = False
             save_command_states(command_states)  # Save updated states
