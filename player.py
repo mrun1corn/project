@@ -1,4 +1,5 @@
 import os
+import re
 import yt_dlp
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -8,6 +9,10 @@ from comm_checker import command_states, check_user_approval
 DOWNLOAD_DIR = 'downloads'
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
+
+def sanitize_filename(filename):
+    # Replace problematic characters and strip excess whitespace
+    return re.sub(r'[^\w\-_\. ]', '_', filename).strip()
 
 async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -49,7 +54,11 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
             # Extract audio format and file size information
             if 'formats' in info_dict:
-                audio_format = next((f for f in info_dict['formats'] if f['format_id'] == '251'), None)
+                # Get the first available audio format that Telegram supports
+                audio_format = next(
+                    (f for f in info_dict['formats'] if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('ext') in ['mp3', 'm4a', 'ogg', 'opus', 'webm']),
+                    None
+                )
 
                 if not audio_format:
                     await progress_message.edit_text("Error: No suitable audio format found.")
@@ -69,7 +78,7 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
                 # Check if the file exceeds the 20 MB limit
                 if file_size > 20 * 1024 * 1024:  # 20 MB limit
-                    await progress_message.edit_text(f"The audio file size is: {file_size / (1024 * 1024):.2f} MB. Please use externel downloader.")
+                    await progress_message.edit_text(f"The audio file size is: {file_size / (1024 * 1024):.2f} MB. Please use external downloader.")
                     return
 
                 # Now proceed to download the file since size is acceptable
@@ -89,14 +98,29 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
                     ydl.download([info_dict['webpage_url']])
 
-                # Send the downloaded audio file
-                downloaded_file = next((f for f in os.listdir(DOWNLOAD_DIR) if f.endswith(('.webm', '.m4a', '.opus'))), None)
+                # Check and list all files in the downloads directory to debug the issue
+                downloaded_files = os.listdir(DOWNLOAD_DIR)
+                print(f"Files in downloads directory: {downloaded_files}")
+
+                # Find and sanitize an audio file that Telegram supports (checking multiple extensions)
+                downloaded_file = next((f for f in downloaded_files if f.endswith(('.mp3', '.m4a', '.ogg', '.opus', '.webm'))), None)
+
                 if downloaded_file:
-                    file_title = os.path.splitext(downloaded_file)[0]
-                    await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'{DOWNLOAD_DIR}/{downloaded_file}', 'rb'), title=file_title)
-                    os.remove(f'{DOWNLOAD_DIR}/{downloaded_file}')  # Clean up after sending
+                    sanitized_file = sanitize_filename(downloaded_file)
+                    os.rename(os.path.join(DOWNLOAD_DIR, downloaded_file), os.path.join(DOWNLOAD_DIR, sanitized_file))
+
+                    # Strip the file extension for the title
+                    title_without_extension, _ = os.path.splitext(sanitized_file)
+
+                    # Send the downloaded and sanitized audio file with the title excluding extension
+                    await context.bot.send_audio(
+                        chat_id=update.effective_chat.id,
+                        audio=open(f'{DOWNLOAD_DIR}/{sanitized_file}', 'rb'),
+                        title=title_without_extension,  # Only the name without extension
+                    )
+                    os.remove(f'{DOWNLOAD_DIR}/{sanitized_file}')  # Clean up after sending
                 else:
-                    await progress_message.edit_text("Error: Audio file not found after download.")
+                    await progress_message.edit_text("Error: Audio file not found after download. Files in directory: " + ", ".join(downloaded_files))
 
         except Exception as e:
             await progress_message.edit_text(f"Error occurred: {e}")
@@ -110,4 +134,3 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         await update.message.reply_text(f"An unexpected error occurred: {e}")
         print(f"Unexpected error: {e}")
-
