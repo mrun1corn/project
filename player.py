@@ -134,3 +134,92 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         await update.message.reply_text(f"An unexpected error occurred: {e}")
         print(f"Unexpected error: {e}")
+
+async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        # Check if the user is approved
+        if not await check_user_approval(update.effective_user.id):
+            await update.message.reply_text("You are not approved to use this command.")
+            return
+
+        if not command_states['video']:
+            await update.message.reply_text("The command is currently disabled.")
+            return          
+        if len(context.args) == 0:
+            await update.message.reply_text("Usage: /video <video_name>")
+            return
+
+        video_name = " ".join(context.args)
+        
+        # Reply to the user's command
+        progress_message = await update.message.reply_text(f"Searching for: {video_name}")
+
+        # yt-dlp options for getting the video in mp4 and limiting to 480p
+        ydl_opts_info = {
+            'format': 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/mp4',  # Force MP4 format with 480p limit
+            'noplaylist': True,
+            'quiet': True,
+            'skip_download': True,
+            'default_search': 'ytsearch',
+        }
+
+        try:
+            # Get metadata about the video
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                info_dict = ydl.extract_info(video_name, download=False)
+
+            if 'entries' in info_dict:
+                # Extract the first result from the search
+                info_dict = info_dict['entries'][0]
+
+            # Check if the video file exceeds the 50 MB limit for Telegram
+            file_size = info_dict.get('filesize', None)
+            if file_size and file_size > 50 * 1024 * 1024:  # 50 MB limit
+                await progress_message.edit_text(f"The video file size is: {file_size / (1024 * 1024):.2f} MB. Please use an external downloader.")
+                return
+
+            # Download the video using yt-dlp
+            ydl_opts_download = {
+                'format': 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/mp4',  # Force MP4 format with 480p
+                'outtmpl': os.path.join(DOWNLOAD_DIR, '%(title)s.%(ext)s'),
+                'noplaylist': True,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
+                ydl.download([info_dict['webpage_url']])
+
+            # Check and list all files in the downloads directory
+            downloaded_files = os.listdir(DOWNLOAD_DIR)
+            print(f"Files in downloads directory: {downloaded_files}")
+
+            # Find the downloaded video file
+            downloaded_file = next((f for f in downloaded_files if f.endswith('.mp4')), None)
+
+            if downloaded_file:
+                sanitized_file = sanitize_filename(downloaded_file)
+                os.rename(os.path.join(DOWNLOAD_DIR, downloaded_file), os.path.join(DOWNLOAD_DIR, sanitized_file))
+
+                # Send the video file using Telegram's send_video method
+                await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=open(f'{DOWNLOAD_DIR}/{sanitized_file}', 'rb'),
+                    caption=sanitized_file.replace('.mp4', ''),  # Remove the extension from the caption
+                )
+
+                # Clean up after sending
+                os.remove(f'{DOWNLOAD_DIR}/{sanitized_file}')  # Delete the video after sending
+            else:
+                await progress_message.edit_text("Error: Video file not found after download. Files in directory: " + ", ".join(downloaded_files))
+
+        except Exception as e:
+            await progress_message.edit_text(f"Error occurred: {e}")
+            print(f"Error in play_video: {e}")
+
+    except OSError as e:
+        # Handle I/O errors
+        await update.message.reply_text(f"OS Error: {e}")
+        print(f"OS Error in play_video: {e}")
+
+    except Exception as e:
+        await update.message.reply_text(f"An unexpected error occurred: {e}")
+        print(f"Unexpected error: {e}")
