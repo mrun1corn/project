@@ -1,7 +1,7 @@
 import os
 import re
 import yt_dlp
-import asyncio  # Import asyncio for sleep function
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 from comm_checker import command_states, check_user_approval
@@ -95,7 +95,7 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 await progress_message.edit_text("Error: Could not retrieve file size.")
                 return
 
-            if file_size > 20 * 1024 * 1024:
+            if file_size > 20 * 1024 * 1024:  # 20 MB limit for audio files
                 await progress_message.edit_text(f"The audio file size is: {file_size / (1024 * 1024):.2f} MB. Please use an external downloader.")
                 return
 
@@ -123,7 +123,7 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
                 await send_audio_with_retry(context, update.effective_chat.id, os.path.join(DOWNLOAD_DIR, sanitized_file), title_without_extension)
 
-                os.remove(os.path.join(DOWNLOAD_DIR, sanitized_file))
+                os.remove(os.path.join(DOWNLOAD_DIR, sanitized_file))  # Remove after sending
             else:
                 await progress_message.edit_text("Error: Audio file not found after download. Files in directory: " + ", ".join(downloaded_files))
 
@@ -141,6 +141,14 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
+        if not await check_user_approval(update.effective_user.id):
+            await update.message.reply_text("You are not approved to use this command.")
+            return
+
+        if not command_states['video']:
+            await update.message.reply_text("The command is currently disabled.")
+            return    
+
         if len(context.args) == 0:
             await update.message.reply_text("Usage: /video <video_name>")
             return
@@ -170,7 +178,7 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     info_dict = info_dict['entries'][0]
 
                 file_size = info_dict.get('filesize', None)
-                if file_size and file_size > 50 * 1024 * 1024:
+                if file_size and file_size > 50 * 1024 * 1024:  # 50 MB limit for video files
                     await progress_message.edit_text(f"The video file size is: {file_size / (1024 * 1024):.2f} MB. Please use an external downloader.")
                     return
 
@@ -189,11 +197,14 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 await progress_message.edit_text(f"Error occurred during download: {e}")
                 return
 
-        caption_without_extension = sanitized_video_name
-
-        await send_video_with_retry(context, update.effective_chat.id, video_file_path, caption_without_extension)
-
-        os.remove(video_file_path)
+        # Before retrying to send the video, ensure it has not already been sent
+        if os.path.exists(video_file_path):  # Check if the file still exists
+            try:
+                await send_video_with_retry(context, update.effective_chat.id, video_file_path, sanitized_video_name)
+                os.remove(video_file_path)  # Remove after sending if successful
+            except Exception as e:
+                await progress_message.edit_text(f"Failed to send video: {e}")
+                print(f"Failed to send video: {e}")
 
     except OSError as e:
         await update.message.reply_text(f"OS Error: {e}")
