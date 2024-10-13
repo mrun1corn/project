@@ -27,6 +27,8 @@ def main() -> None:
     application.add_handler(CommandHandler("disable", disable_command))
     application.add_handler(CommandHandler("approve", approve_user))
     application.add_handler(CommandHandler("revoke", revoke_user))
+    
+    #for interactive shell
     register_shell_handlers(application)
     # Run the bot
     application.run_polling()

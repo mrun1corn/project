@@ -86,7 +86,7 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             else:
                 await update.message.reply_text("This user is already approved.")
         else:
-            await update.message.reply_text("Please provide a username (e.g., /approve @username).")
+            await update.message.reply_text("Please reply to a user's message or provide a username (e.g., /approvr @username).")
     elif update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         if user_id not in approved_users:
@@ -96,29 +96,39 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             await update.message.reply_text("This user is already approved.")
     else:
-        await update.message.reply_text("Please provide a username or reply to the user's message to approve them.")
+        await update.message.reply_text("Please reply to a user's message or provide a username (e.g., /approve @username).")
 
 async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revoke a user's approval to access commands by username or by replying to their message."""
     if context.args:
         username = context.args[0].lstrip('@')  # Remove '@' if provided
         if username:
-            # Try to find the user by their username
-            user = await context.bot.get_chat(username)
-            user_id = user.id
+            try:
+                # Try to find the user by their username
+                user = await context.bot.get_chat(username)
+                user_id = user.id
 
-            if user_id in approved_users:
-                approved_users.remove(user_id)  # Remove the user from the approved list
-                save_approved_users(approved_users)  # Save updated approved users
-                await update.message.reply_text(f"User @{username} has been revoked from access.")
-            else:
-                await update.message.reply_text("This user is not approved.")
+                if user_id in approved_users:
+                    approved_users.remove(user_id)  # Remove the user from the approved list
+                    save_approved_users(approved_users)  # Save updated approved users
+                    await update.message.reply_text(f"User @{username} has been revoked from access.")
+                else:
+                    await update.message.reply_text(f"User @{username} is not approved.")
+            except Exception as e:
+                await update.message.reply_text(f"Error: Could not find user @{username}.")
         else:
             await update.message.reply_text("Please provide a username (e.g., /revoke @username).")
     elif update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         if user_id in approved_users:
-            approved_users.remove(user_id)  #
+            approved_users.remove(user_id)  # Remove the user from the approved list
+            save_approved_users(approved_users)  # Save updated approved users
+            await update.message.reply_text(f"User {user_id} has been revoked from access.")
+        else:
+            await update.message.reply_text("This user is not approved.")
+    else:
+        await update.message.reply_text("Please reply to a user's message or provide a username (e.g., /revoke @username).")
+
 
 
 async def check_user_approval(user_id) -> bool:
