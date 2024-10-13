@@ -1,1 +1,1 @@
-{"command_states": {"reboot": true, "speedtest": true, "ping": true, "music": true, "shell": true, "video": true}}
+{"command_states": {"reboot": true, "speedtest": false, "ping": true, "music": true, "shell": true, "video": true}}
