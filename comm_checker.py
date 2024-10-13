@@ -70,22 +70,24 @@ async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
 
-async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Revoke a user's approval to access commands."""
-    if update.message.reply_to_message:
-        user_id = update.message.reply_to_message.from_user.id
-        if user_id in approved_users:
-            approved_users.remove(user_id)  # Remove user from the approved list
-            save_approved_users(approved_users)  # Save updated approved users
-            await update.message.reply_text(f"User {user_id} has been revoked from access.")
-        else:
-            await update.message.reply_text("This user is not approved.")
-    else:
-        await update.message.reply_text("Please reply to the user's message to revoke their approval.")
-
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Approve a user to access all commands."""
-    if update.message.reply_to_message:
+    """Approve a user to access all commands by username or by replying to their message."""
+    if context.args:
+        username = context.args[0].lstrip('@')  # Remove '@' if it exists
+        if username:
+            # Try to find the user by their username
+            user = await context.bot.get_chat(username)
+            user_id = user.id
+
+            if user_id not in approved_users:
+                approved_users.append(user_id)  # Add user to the approved list
+                save_approved_users(approved_users)  # Save approved users
+                await update.message.reply_text(f"User @{username} has been approved.")
+            else:
+                await update.message.reply_text("This user is already approved.")
+        else:
+            await update.message.reply_text("Please provide a username (e.g., /approve @username).")
+    elif update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         if user_id not in approved_users:
             approved_users.append(user_id)  # Add user to the approved list
@@ -94,7 +96,30 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             await update.message.reply_text("This user is already approved.")
     else:
-        await update.message.reply_text("Please reply to the user's message to approve them.")
+        await update.message.reply_text("Please provide a username or reply to the user's message to approve them.")
+
+async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Revoke a user's approval to access commands by username or by replying to their message."""
+    if context.args:
+        username = context.args[0].lstrip('@')  # Remove '@' if provided
+        if username:
+            # Try to find the user by their username
+            user = await context.bot.get_chat(username)
+            user_id = user.id
+
+            if user_id in approved_users:
+                approved_users.remove(user_id)  # Remove the user from the approved list
+                save_approved_users(approved_users)  # Save updated approved users
+                await update.message.reply_text(f"User @{username} has been revoked from access.")
+            else:
+                await update.message.reply_text("This user is not approved.")
+        else:
+            await update.message.reply_text("Please provide a username (e.g., /revoke @username).")
+    elif update.message.reply_to_message:
+        user_id = update.message.reply_to_message.from_user.id
+        if user_id in approved_users:
+            approved_users.remove(user_id)  #
+
 
 async def check_user_approval(user_id) -> bool:
     """Check if a user is approved before allowing commands."""
