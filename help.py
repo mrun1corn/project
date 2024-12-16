@@ -3,6 +3,13 @@ from telegram.ext import ContextTypes
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
+        if not await check_user_approval(update.effective_user.id):
+            await update.message.reply_text("You are not approved to use this command.")
+            return
+
+        if not command_states['music']:
+            await update.message.reply_text("The music command is currently disabled.")
+            return          
         help_text = (
             "/start - Start the bot\n"
             "/subnet <ip> <mask> - Calculate subnet\n"

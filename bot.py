@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters  # Make sure to import filters here
-from hello import bot_start
+from hello import bot_start, jaan
 from subcal import subnet
 from help import help
 from systemstatus import bot_status, system_status, speedtest, ping, reboot
@@ -14,6 +14,7 @@ def main() -> None:
 
     # Register commands
     application.add_handler(CommandHandler('start', bot_start))
+    application.add_handler(CommandHandler('jaan', jaan))
     application.add_handler(CommandHandler('subnet', subnet))
     application.add_handler(CommandHandler('help', help))
     application.add_handler(CommandHandler('status', bot_status))
