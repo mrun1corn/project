@@ -8,6 +8,8 @@ from comm_checker import enable_command, disable_command, approve_user, revoke_u
 from player import play_audio, play_video
 from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
+from bg_remove import remove_bg
+
 
 def main() -> None:
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -28,9 +30,12 @@ def main() -> None:
     application.add_handler(CommandHandler("disable", disable_command))
     application.add_handler(CommandHandler("approve", approve_user))
     application.add_handler(CommandHandler("revoke", revoke_user))
+    application.add_handler(CommandHandler('bgremove', remove_bg))
     
     #for interactive shell
     register_shell_handlers(application)
+
+
     # Run the bot
     application.run_polling()
 
