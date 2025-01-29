@@ -7,10 +7,6 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from comm_checker import command_states, check_user_approval
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Ensure the 'downloads' directory exists
 DOWNLOAD_DIR = 'downloads'
 if not os.path.exists(DOWNLOAD_DIR):
@@ -29,7 +25,6 @@ async def send_audio_with_retry(context, chat_id, audio_file_path, title, max_re
             )
             return True  # Success
         except Exception as e:
-            logger.error(f"Attempt {attempt + 1} to send audio failed: {e}")
             await asyncio.sleep(2 ** attempt)  # Exponential backoff
     return False  # All retries failed
 
@@ -43,7 +38,6 @@ async def send_video_with_retry(context, chat_id, video_file_path, caption, max_
             )
             return True  # Success
         except Exception as e:
-            logger.error(f"Attempt {attempt + 1} to send video failed: {e}")
             await asyncio.sleep(2 ** attempt)  # Exponential backoff
     return False  # All retries failed
 
@@ -131,17 +125,14 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         except yt_dlp.utils.DownloadError as e:
             await progress_message.edit_text(f"❌ Download error: `{str(e)}`", parse_mode='Markdown')
-            logger.error(f"DownloadError: {e}")
         except Exception as e:
             await progress_message.edit_text(f"❌ Error: `{str(e)}`", parse_mode='Markdown')
-            logger.error(f"Unexpected error: {e}")
 
     except Exception as e:
         if progress_message:
             await progress_message.edit_text(f"❌ Critical error: `{str(e)}`", parse_mode='Markdown')
         else:
             await update.message.reply_text(f"❌ Critical error: `{str(e)}`", parse_mode='Markdown')
-        logger.error(f"Critical error: {e}")
 
 async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     progress_message = None
@@ -202,11 +193,9 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
             except yt_dlp.utils.DownloadError as e:
                 await progress_message.edit_text(f"❌ Download error: `{str(e)}`", parse_mode='Markdown')
-                logger.error(f"DownloadError: {e}")
                 return
             except Exception as e:
                 await progress_message.edit_text(f"❌ Error: `{str(e)}`", parse_mode='Markdown')
-                logger.error(f"Unexpected error: {e}")
                 return
 
         if os.path.exists(video_file_path):
@@ -224,4 +213,3 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await progress_message.edit_text(f"❌ Critical error: `{str(e)}`", parse_mode='Markdown')
         else:
             await update.message.reply_text(f"❌ Critical error: `{str(e)}`", parse_mode='Markdown')
-        logger.error(f"Critical error: {e}")
