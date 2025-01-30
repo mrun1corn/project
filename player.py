@@ -2,7 +2,6 @@ import os
 import re
 import yt_dlp
 import asyncio
-import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from comm_checker import command_states, check_user_approval
