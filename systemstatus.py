@@ -30,40 +30,62 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("❌ Failed to retrieve bot status.")
 
 async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send detailed system metrics."""
-    if not await check_user_approval(update.effective_user.id):
-        await update.message.reply_text("🔒 You are not approved to use this command.")
+    """Send the current system status including CPU, memory, and disk usage."""
+    if not await check_user_approval(update.effective_user.id):  # Check if the user is approved
+        await update.message.reply_text("You are not approved to use this command.")
         return
 
     try:
-        # System metrics
-        cpu = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        swap = psutil.swap_memory()
-        
-        # Formatting helper
-        def format_bytes(size):
-            return f"{size / (1024**3):.2f} GB"
+        # Get system information
+        cpu_usage = psutil.cpu_percent(interval=1)
+        memory_info = psutil.virtual_memory()
+        swap_info = psutil.swap_memory()
+        disk_info = psutil.disk_usage('/')
+        cpu_count = psutil.cpu_count(logical=False)  # Physical cores
+        cpu_count_logical = psutil.cpu_count(logical=True)  # Logical CPUs
+        cpu_freq = psutil.cpu_freq().current  # CPU frequency
+        cpu_model = platform.processor()  # CPU model
 
+        # System information
+        system = platform.system()  # Operating System
+        node = platform.node()  # System name (hostname)
+        release = platform.release()  # OS version
+        architecture = platform.architecture()[0]  # Architecture (32-bit/64-bit)
+
+        # Prepare response message
         response = (
-            f"🖥️ *System Status*\n"
-            f"• CPU Usage: `{cpu}%`\n"
-            f"• Memory: `{mem.percent}%` ({format_bytes(mem.used)} used)\n"
-            f"• Swap: `{swap.percent}%` ({format_bytes(swap.used)} used)\n"
-            f"• Disk: `{disk.percent}%` ({format_bytes(disk.used)} used)"
+            f"*System Status*\n"
+            f"🖥️ *System:* {system} {release} ({architecture})\n"
+            f"🔧 *Hostname:* {node}\n"
+            f"⚙️ *CPU Model:* `{cpu_model}`\n"
+            f"🧮 *Physical Cores:* {cpu_count}\n"
+            f"🔢 *Logical CPUs:* {cpu_count_logical}\n"
+            f"🔄 *CPU Frequency:* {cpu_freq:.2f} MHz\n"
+            f"📊 *CPU Usage:* {cpu_usage}%\n"
+            f"🧠 *Memory Usage:* {memory_info.percent}% "
+            f"({memory_info.used / (1024 ** 2):.2f} MB used of {memory_info.total / (1024 ** 2):.2f} MB)\n"
+            f"🔄 *Swap Memory Usage:* {swap_info.percent}% "
+            f"({swap_info.used / (1024 ** 2):.2f} MB used of {swap_info.total / (1024 ** 2):.2f} MB)\n"
+            f"💾 *Disk Usage:* {disk_info.percent}% "
+            f"({disk_info.used / (1024 ** 3):.2f} GB used of {disk_info.total / (1024 ** 3):.2f} GB)\n"
         )
 
-        # Battery status (if available)
-        if hasattr(psutil, "sensors_battery"):
-            battery = psutil.sensors_battery()
-            if battery:
-                status = "🔌 Charging" if battery.power_plugged else "🔋 Discharging"
-                response += f"\n• Battery: `{battery.percent}%` ({status})"
+        # Check for battery info and append if available
+        battery = psutil.sensors_battery()
+        if battery:
+            battery_status = f"🔋 *Battery Status:* {battery.percent}% {'🔌' if battery.power_plugged else '⚡'}\n"
+            response += battery_status  # Append battery status to response
 
-        await update.message.reply_text(response, parse_mode="MarkdownV2")
+        # Escape special characters in response for MarkdownV2
+        response = response.replace(".", "\\.").replace("-", "\\-").replace("_", "\\_").replace("*", "\\*") \
+                           .replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)") \
+                           .replace("~", "\\~").replace("`", "\\`")
+
+        # Send the response using MarkdownV2
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=response, parse_mode='MarkdownV2')
     except Exception as e:
-        await update.message.reply_text("❌ Failed to retrieve system status.")
+        print(f"Error in system_status: {e}")
+
 
 async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Run a speed test with progress updates."""
