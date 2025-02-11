@@ -135,7 +135,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     host = context.args[0]
-    msg = await update.message.reply_text(f"🔄 Pinging `{host}`...", parse_mode="MarkdownV2")
+    msg = await update.message.reply_text(f"🔄 Pinging {host}")
 
     try:
         count = 4 if os.name == 'posix' else 2  # Fewer pings on Windows
@@ -147,13 +147,13 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         
         if result.returncode == 0:
-            await msg.edit_text(f"✅ Ping to `{host}` successful!\n```\n{result.stdout}\n```", parse_mode="MarkdownV2")
+            await msg.edit_text(f"✅ Ping to {host} successful!\n\n{result.stdout}\n")
         else:
-            await msg.edit_text(f"❌ Ping to `{host}` failed:\n```\n{result.stderr}\n```", parse_mode="MarkdownV2")
+            await msg.edit_text(f"❌ Ping to {host} failed:\n\n{result.stderr}\n")
     except subprocess.TimeoutExpired:
-        await msg.edit_text(f"⌛ Ping to `{host}` timed out.")
+        await msg.edit_text(f"⌛ Ping to {host} timed out.")
     except Exception as e:
-        await msg.edit_text(f"❌ Error pinging `{host}`.")
+        await msg.edit_text(f"❌ Error pinging {host}.")
 
 async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Safely reboot the bot with admin checks."""
