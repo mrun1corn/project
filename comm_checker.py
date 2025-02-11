@@ -18,6 +18,7 @@ def load_command_states():
             'shell': True,
             'video': True,
             'bgremove': True,
+	    'help': True
         }
 
 # Save command states to a JSON file
