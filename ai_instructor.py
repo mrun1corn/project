@@ -11,7 +11,7 @@ from telegram.error import BadRequest
 from config import ADMIN_CHAT_ID
 
 # Ollama configuration
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://192.168.5.251:11434/api/generate"
 RETRY_LIMIT = 2
 TIMEOUT = 120
 
@@ -157,8 +157,8 @@ async def stream_response(url, payload, progress_msg, user_id, fallback_model=Fa
                 error_msg = "Taking too long! Let’s retry."
 
             progress_task.cancel()
-            if fallback_model and payload["model"] != "tinyllama":
-                await progress_msg.edit_text("Switching to tinyllama for speed...")
+            if fallback_model and payload["model"] != "dolphin-mistral":
+                await progress_msg.edit_text("Switching to mini model for speed...")
                 payload["model"] = "tinyllama"
                 continue
             else:

@@ -1,11 +1,12 @@
 {
   "1436979843": {
     "history": [
-      "hi",
       "what did you generated? I said hi to you",
       "can you write code? Write 2 number of sum in rust",
+      "hi",
+      "hi",
       "hi"
     ],
-    "last_model": "tinyllama"
+    "last_model": "dolphin-mistral"
   }
 }
