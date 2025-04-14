@@ -22,6 +22,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/music - to listen music\n"
             "/video - to view video\n"
             "/bgremove - to remove background of an image\n"
+	    "/ai - to chat with ai\n"
         )
         await update.message.reply_text(help_text)
     except Exception as e:

@@ -5,3 +5,4 @@ requests
 psutil
 yt-dlp
 speedtest-cli
+aiohttp

@@ -9,6 +9,7 @@ from player import play_audio, play_video
 from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
+from ai_instructor import ai_command
 
 
 def main() -> None:
@@ -31,6 +32,8 @@ def main() -> None:
     application.add_handler(CommandHandler("approve", approve_user))
     application.add_handler(CommandHandler("revoke", revoke_user))
     application.add_handler(CommandHandler('bgremove', remove_bg))
+    application.add_handler(CommandHandler('ai', ai_command))
+
     
     #for interactive shell
     register_shell_handlers(application)
