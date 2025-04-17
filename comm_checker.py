@@ -19,7 +19,7 @@ def load_command_states():
             'video': True,
             'bgremove': True,
             'ai': True,
-	    'help': True
+            'help': True
         }
 
 # Save command states to a JSON file
@@ -91,21 +91,57 @@ async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Please reply to the user's message to revoke their approval.")
 
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Approve a user to access all commands."""
+    """Approve a user to access all commands by reply, username, or user ID."""
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:  # If the user is not admin
         await update.message.reply_text("You do not have permission to use this command.")
         return    
+
+    # Option 1: Approve by replying to a message
     if update.message.reply_to_message:
-        user_id = update.message.reply_to_message.from_user.id
-        if user_id not in approved_users:
-            approved_users.append(user_id)  # Add user to the approved list
+        target_user_id = update.message.reply_to_message.from_user.id
+        if target_user_id not in approved_users:
+            approved_users.append(target_user_id)  # Add user to the approved list
             save_approved_users(approved_users)  # Save approved users
-            await update.message.reply_text(f"User {user_id} has been approved.")
+            await update.message.reply_text(f"User {target_user_id} has been approved.")
         else:
             await update.message.reply_text("This user is already approved.")
-    else:
-        await update.message.reply_text("Please reply to the user's message to approve them.")
+        return
+
+    # Option 2: Approve by username or user ID
+    if context.args:
+        identifier = context.args[0].strip()
+        
+        # Check if the identifier is a user ID (numeric)
+        if identifier.isdigit():
+            target_user_id = int(identifier)
+            if target_user_id not in approved_users:
+                approved_users.append(target_user_id)  # Add user to the approved list
+                save_approved_users(approved_users)  # Save approved users
+                await update.message.reply_text(f"User with ID {target_user_id} has been approved.")
+            else:
+                await update.message.reply_text(f"User with ID {target_user_id} is already approved.")
+            return
+        
+        # Check if the identifier is a username (starts with @)
+        if identifier.startswith('@'):
+            username = identifier
+            try:
+                # Try to resolve username to user ID via Telegram API
+                chat = await context.bot.get_chat(username)
+                target_user_id = chat.id
+                if target_user_id not in approved_users:
+                    approved_users.append(target_user_id)  # Add user to the approved list
+                    save_approved_users(approved_users)  # Save approved users
+                    await update.message.reply_text(f"User {username} (ID: {target_user_id}) has been approved.")
+                else:
+                    await update.message.reply_text(f"User {username} is already approved.")
+            except Exception as e:
+                await update.message.reply_text(f"Error: Could not find user {username}. Ensure the username is correct and the user has interacted with the bot.")
+            return
+
+    # If no valid input is provided
+    await update.message.reply_text("Please reply to a user's message, or provide a username (e.g., @username) or user ID (e.g., 123456789).")
 
 async def check_user_approval(user_id) -> bool:
     """Check if a user is approved before allowing commands."""
