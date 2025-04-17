@@ -1,5 +1,5 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters  # Make sure to import filters here
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from hello import bot_start, jaan
 from subcal import subnet
 from help import help
@@ -10,7 +10,6 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
 from ai_instructor import ai_command
-
 
 def main() -> None:
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -34,10 +33,8 @@ def main() -> None:
     application.add_handler(CommandHandler('bgremove', remove_bg))
     application.add_handler(CommandHandler('ai', ai_command))
 
-    
-    #for interactive shell
+    # For interactive shell
     register_shell_handlers(application)
-
 
     # Run the bot
     application.run_polling()

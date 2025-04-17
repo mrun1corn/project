@@ -1,12 +1,12 @@
 {
   "1436979843": {
+    "memory": {},
     "history": [
-      "what did you generated? I said hi to you",
-      "can you write code? Write 2 number of sum in rust",
-      "hi",
-      "hi",
-      "hi"
-    ],
-    "last_model": "dolphin-mistral"
+      "generate ROBIN like figlet Text",
+      "what do you feeling now",
+      "make a Todo lis",
+      "what is Vs code",
+      "what is visual basic"
+    ]
   }
 }
