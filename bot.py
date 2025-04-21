@@ -12,7 +12,9 @@ from bg_remove import remove_bg
 from ai_instructor import ai_command
 
 def main() -> None:
-    application = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
+    # Build application with connection pool for better network handling
+    application = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).connection_pool_size(20).build()
+
     # Register commands
     application.add_handler(CommandHandler('start', bot_start))
     application.add_handler(CommandHandler('jaan', jaan))
@@ -36,7 +38,8 @@ def main() -> None:
     register_shell_handlers(application)
 
     # Run the bot
-    application.run_polling()
+    print("Starting bot polling...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()

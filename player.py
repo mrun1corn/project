@@ -7,10 +7,12 @@ import aiofiles.os
 import uuid
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.error import RetryAfter, TimedOut
 from comm_checker import command_states, check_user_approval
 
-# Semaphore to limit concurrent downloads
+# Semaphores to limit concurrent downloads and uploads
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(10)
+UPLOAD_SEMAPHORE = asyncio.Semaphore(3)  # Limit concurrent uploads to Telegram
 
 # Ensure the 'downloads' directory exists
 DOWNLOAD_DIR = 'downloads'
@@ -22,37 +24,63 @@ def sanitize_filename(filename):
     return re.sub(r'[^\w\-_\. ]', '_', filename).strip()
 
 async def send_audio_with_retry(context, chat_id, audio_file_path, title, max_retries=3):
-    """Send audio with retry logic."""
+    """Send audio with retry logic, handling timeouts and rate limits."""
     for attempt in range(max_retries):
         try:
-            print(f"Sending audio to chat {chat_id}: {audio_file_path}")
-            await context.bot.send_audio(
-                chat_id=chat_id,
-                audio=open(audio_file_path, 'rb'),
-                title=title,
+            print(f"Sending audio to chat {chat_id}: {audio_file_path} (attempt {attempt + 1})")
+            await asyncio.wait_for(
+                context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=open(audio_file_path, 'rb'),
+                    title=title
+                ),
+                timeout=60  # Enforce 60-second timeout
             )
             print(f"Audio sent successfully to chat {chat_id}")
             return True
+        except RetryAfter as e:
+            print(f"RetryAfter error: waiting {e.retry_after} seconds")
+            await asyncio.sleep(e.retry_after)
+        except TimedOut as e:
+            print(f"Timeout error sending audio: {e}")
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+        except asyncio.TimeoutError:
+            print(f"Timeout after 60 seconds sending audio")
+            await asyncio.sleep(2 ** attempt)
         except Exception as e:
             print(f"Failed to send audio (attempt {attempt + 1}): {e}")
             await asyncio.sleep(2 ** attempt)
+    print(f"Failed to send audio after {max_retries} attempts")
     return False
 
 async def send_video_with_retry(context, chat_id, video_file_path, caption, max_retries=3):
-    """Send video with retry logic."""
+    """Send video with retry logic, handling timeouts and rate limits."""
     for attempt in range(max_retries):
         try:
-            print(f"Sending video to chat {chat_id}: {video_file_path}")
-            await context.bot.send_video(
-                chat_id=chat_id,
-                video=open(video_file_path, 'rb'),
-                caption=caption,
+            print(f"Sending video to chat {chat_id}: {video_file_path} (attempt {attempt + 1})")
+            await asyncio.wait_for(
+                context.bot.send_video(
+                    chat_id=chat_id,
+                    video=open(video_file_path, 'rb'),
+                    caption=caption
+                ),
+                timeout=60  # Enforce 60-second timeout
             )
             print(f"Video sent successfully to chat {chat_id}")
             return True
+        except RetryAfter as e:
+            print(f"RetryAfter error: waiting {e.retry_after} seconds")
+            await asyncio.sleep(e.retry_after)
+        except TimedOut as e:
+            print(f"Timeout error sending video: {e}")
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+        except asyncio.TimeoutError:
+            print(f"Timeout after 60 seconds sending video")
+            await asyncio.sleep(2 ** attempt)
         except Exception as e:
             print(f"Failed to send video (attempt {attempt + 1}): {e}")
             await asyncio.sleep(2 ** attempt)
+    print(f"Failed to send video after {max_retries} attempts")
     return False
 
 async def run_ydl_extract_info(song_name):
@@ -128,7 +156,7 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     await progress_message.edit_text("❌ Could not estimate file size.")
                     return
 
-                if file_size > 20 * 1024 * 1024:  # 20 MB limit
+                if file_size > 15 * 1024 * 1024:  # Stricter 15 MB limit for audio
                     await progress_message.edit_text(f"❌ File too large ({file_size/(1024*1024):.1f} MB). Use an external downloader.")
                     return
 
@@ -147,7 +175,8 @@ async def play_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
                 if downloaded_file:
                     audio_path = os.path.join(DOWNLOAD_DIR, downloaded_file)
-                    success = await send_audio_with_retry(context, update.effective_chat.id, audio_path, sanitized_title)
+                    async with UPLOAD_SEMAPHORE:
+                        success = await send_audio_with_retry(context, update.effective_chat.id, audio_path, sanitized_title)
                     if success:
                         await progress_message.delete()
                     else:
@@ -241,7 +270,7 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                         info_dict = info_dict['entries'][0]
 
                     file_size = info_dict.get('filesize') or (info_dict.get('tbr', 0) * 1000 / 8) * info_dict.get('duration', 0)
-                    if file_size and file_size > 50 * 1024 * 1024:
+                    if file_size and file_size > 40 * 1024 * 1024:  # Stricter 40 MB limit for video
                         await progress_message.edit_text(f"❌ Video too large ({file_size/(1024*1024):.1f} MB).")
                         return
 
@@ -262,7 +291,8 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     return
 
             if await aiofiles.os.path.exists(video_file_path):
-                success = await send_video_with_retry(context, update.effective_chat.id, video_file_path, sanitized_video_name)
+                async with UPLOAD_SEMAPHORE:
+                    success = await send_video_with_retry(context, update.effective_chat.id, video_file_path, sanitized_video_name)
                 if success:
                     await progress_message.delete()
                     if await aiofiles.os.path.exists(video_file_path):
