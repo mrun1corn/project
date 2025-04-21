@@ -12,8 +12,7 @@ from bg_remove import remove_bg
 from ai_instructor import ai_command
 
 def main() -> None:
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-
+    application = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
     # Register commands
     application.add_handler(CommandHandler('start', bot_start))
     application.add_handler(CommandHandler('jaan', jaan))

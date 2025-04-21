@@ -6,3 +6,4 @@ psutil
 yt-dlp
 speedtest-cli
 aiohttp
+aiofiles
