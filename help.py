@@ -24,9 +24,9 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/bgremove - Remove background of an image\n"
             "/ai - Chat with AI\n"
             "/store <text> - Save a note (or reply to a message to save its text)\n"
-            "/getnote <id or keyword> - Retrieve a note by ID or keyword\n"
+            "/get <id or keyword> - Retrieve a note by ID or keyword\n"
             "/listnotes - List all your notes\n"
-            "/deletenote <id> - Delete a note by ID\n"
+            "/delnote <id> - Delete a note by ID\n"
         )
 
         await update.message.reply_text(help_text)

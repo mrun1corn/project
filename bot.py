@@ -10,7 +10,7 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
 from ai_instructor import ai_command
-from notes import store, getnote, listnotes, deletenote
+from notes import store, getnote, listnotes, deletenote, hashtag_handler
 
 def main() -> None:
     # Build application with connection pool for better network handling
@@ -35,9 +35,12 @@ def main() -> None:
     application.add_handler(CommandHandler('bgremove', remove_bg))
     application.add_handler(CommandHandler('ai', ai_command))
     application.add_handler(CommandHandler('store', store))
-    application.add_handler(CommandHandler('getnote', getnote))
+    application.add_handler(CommandHandler('get', getnote))
     application.add_handler(CommandHandler('listnotes', listnotes))
-    application.add_handler(CommandHandler('deletenote', deletenote))
+    application.add_handler(CommandHandler('delnote', deletenote))
+    #for notes module
+    application.add_handler(hashtag_handler)
+    
 
     # For interactive shell
     register_shell_handlers(application)

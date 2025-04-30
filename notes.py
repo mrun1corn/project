@@ -2,37 +2,64 @@ import json
 import os
 import time
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, MessageHandler, filters
 from comm_checker import check_user_approval, check_command_enabled
 from config import ADMIN_CHAT_ID
 
 # File to store notes
 NOTES_FILE = "notes.json"
 
-# Load notes from JSON file
 def load_notes():
+    """Load notes from JSON file with error handling."""
     try:
-        with open(NOTES_FILE, 'r') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+        if os.path.exists(NOTES_FILE):
+            with open(NOTES_FILE, 'r') as f:
+                return json.load(f)
+        return {"notes": []}
+    except (json.JSONDecodeError, IOError):
         return {"notes": []}
 
-# Save notes to JSON file
 def save_notes(notes):
+    """Save notes to JSON file with error handling."""
     try:
         with open(NOTES_FILE, 'w') as f:
             json.dump(notes, f, indent=2)
-    except Exception as e:
-        print(f"Error saving notes: {e}")
+    except IOError:
+        pass
 
-# Generate a unique note ID
 def generate_note_id():
+    """Generate a unique note ID based on timestamp."""
     return str(int(time.time() * 1000))
+
+def get_title_from_content(content):
+    """Extract first two words from content as title, joined with underscore."""
+    if not content or not content.strip():
+        return "(No title)"
+    words = content.strip().split()
+    return "_".join(words[:2]) if len(words) >= 2 else words[0]
+
+def validate_title(title):
+    """Validate note title to prevent problematic characters."""
+    if not title or not title.strip():
+        return False
+    # Allow alphanumeric, underscores, hyphens, and spaces
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ")
+    return all(c in allowed_chars for c in title)
+
+def get_user_notes(notes, chat_id, user_id, is_group):
+    """Filter notes for a user or group."""
+    return [
+        note for note in notes["notes"]
+        if (note["chat_id"] == (chat_id if is_group else user_id) or
+            (note["user_id"] == user_id and not note["is_group"]))
+    ]
 
 async def store(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Save a new note with title and content, or content from replied message."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+
     if not await check_user_approval(user_id):
         await update.message.reply_text("❌ You are not approved to use this command.")
         return
@@ -45,32 +72,32 @@ async def store(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     has_reply = update.message.reply_to_message and update.message.reply_to_message.text
 
     if context.args:
-        if len(context.args) >= 2:
-            # /store <notename> <notebody>
+        if len(context.args) >= 2 and validate_title(context.args[0]):
             note_title = context.args[0]
             note_content = " ".join(context.args[1:])
-        elif has_reply:
-            # /store <title> (with reply)
+        elif has_reply and len(context.args) == 1 and validate_title(context.args[0]):
             note_title = context.args[0]
             note_content = update.message.reply_to_message.text
         else:
-            # /store <content> (no reply)
             note_content = " ".join(context.args)
+            note_title = get_title_from_content(note_content)
     elif has_reply:
-        # /store (with reply)
         note_content = update.message.reply_to_message.text
+        note_title = get_title_from_content(note_content)
     else:
         await update.message.reply_text("Usage: /store <title> <content> or /store <content> or /store [title] (reply to a message)")
         return
 
+    if not note_content:
+        await update.message.reply_text("❌ Note content cannot be empty.")
+        return
+
     notes = load_notes()
-    note_id = generate_note_id()
-    is_group = update.effective_chat.type in ["group", "supergroup"]
     note = {
-        "id": note_id,
+        "id": generate_note_id(),
         "user_id": user_id,
-        "chat_id": chat_id if is_group else user_id,  # Store chat_id for groups, user_id for private
-        "title": note_title,  # Can be null if no title
+        "chat_id": chat_id if is_group else user_id,
+        "title": note_title,
         "content": note_content,
         "timestamp": int(time.time()),
         "is_group": is_group
@@ -78,15 +105,14 @@ async def store(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     notes["notes"].append(note)
     save_notes(notes)
 
-    if note_title:
-        await update.message.reply_text(f"📝 Note ‘{note_title}’ saved")
-    else:
-        await update.message.reply_text("📝 Note saved")
+    await update.message.reply_text(f"📝 Note ‘{note_title}’ saved")
 
 async def getnote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Retrieve a note by title or content keyword."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+
     if not await check_user_approval(user_id):
         await update.message.reply_text("❌ You are not approved to use this command.")
         return
@@ -98,63 +124,56 @@ async def getnote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /getnote <title or keyword>")
         return
 
-    query = " ".join(context.args)
+    query = " ".join(context.args).lower()
     notes = load_notes()
-    is_group = update.effective_chat.type in ["group", "supergroup"]
-    user_notes = [
-        note for note in notes["notes"]
-        if (note["chat_id"] == (chat_id if is_group else user_id) or
-            (note["user_id"] == user_id and not note["is_group"]))
-    ]
+    user_notes = get_user_notes(notes, chat_id, user_id, is_group)
 
-    # Try exact title match first
+    # Exact title match
     matching_notes = [
         note for note in user_notes
-        if "title" in note and note["title"] and query.lower() == note["title"].lower()
+        if note.get("title", "").lower() == query
     ]
     if matching_notes:
-        note = max(matching_notes, key=lambda x: x["timestamp"])  # Get most recent
-        title_text = f"Title: {note['title']}\n" if "title" in note and note["title"] else ""
+        note = max(matching_notes, key=lambda x: x["timestamp"])
+        title_text = f"Title: {note['title']}\n" if note.get("title") else ""
         content = note.get("content", note.get("text", ""))
         await update.message.reply_text(
-            f"📝 {title_text}"
-            f"Content: {content}\n"
-            f"Created: <i>{time.ctime(note['timestamp'])}</i>",
+            f"📝 {title_text}Content: {content}\nCreated: <i>{time.ctime(note['timestamp'])}</i>",
             parse_mode="HTML"
         )
         return
 
-    # Fallback to keyword search in title or content
+    # Keyword search in title or content
     matching_notes = [
         note for note in user_notes
-        if (("title" in note and note["title"] and query.lower() in note["title"].lower()) or
-            (note.get("content", note.get("text", "")) and query.lower() in note.get("content", note.get("text", "")).lower()))
+        if (query in note.get("title", "").lower() or
+            query in note.get("content", note.get("text", "")).lower())
     ]
     if not matching_notes:
         await update.message.reply_text("❌ No notes found matching your query.")
         return
     if len(matching_notes) == 1:
         note = matching_notes[0]
-        title_text = f"Title: {note['title']}\n" if "title" in note and note["title"] else ""
+        title_text = f"Title: {note['title']}\n" if note.get("title") else ""
         content = note.get("content", note.get("text", ""))
         await update.message.reply_text(
-            f"📝 {title_text}"
-            f"Content: {content}\n"
-            f"Created: <i>{time.ctime(note['timestamp'])}</i>",
+            f"📝 {title_text}Content: {content}\nCreated: <i>{time.ctime(note['timestamp'])}</i>",
             parse_mode="HTML"
         )
     else:
         message = f"📝 Found {len(matching_notes)} notes matching '{query}':\n\n"
-        for note in matching_notes[:5]:  # Limit to 5 to avoid flooding
-            title_preview = f"`{note['title'][:20]}...`" if "title" in note and note["title"] else "`(No title)`"
-            content_preview = f"`{note.get('content', note.get('text', ''))[:30]}...`" if note.get("content", note.get("text", "")) else "`(No content)`"
-            message += f"{title_preview} | {content_preview}\n"
+        for note in matching_notes[:5]:
+            title = note.get("title", "(No title)")
+            content = note.get("content", note.get("text", ""))[:30] + "..." if note.get("content", note.get("text", "")) else "(No content)"
+            message += f"- {title} | `{content}`\n"
         await update.message.reply_text(message, parse_mode="Markdown")
 
 async def listnotes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List all notes for the user or group with markup for easy copying."""
+    """List all note titles for the user or group with bold, copyable titles."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+
     if not await check_user_approval(user_id):
         await update.message.reply_text("❌ You are not approved to use this command.")
         return
@@ -163,30 +182,26 @@ async def listnotes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     notes = load_notes()
-    is_group = update.effective_chat.type in ["group", "supergroup"]
-    user_notes = [
-        note for note in notes["notes"]
-        if (note["chat_id"] == (chat_id if is_group else user_id) or
-            (note["user_id"] == user_id and not note["is_group"]))
-    ]
+    user_notes = get_user_notes(notes, chat_id, user_id, is_group)
 
     if not user_notes:
         await update.message.reply_text("📝 No notes found.")
         return
 
-    message = f"📝 Your notes ({len(user_notes)}):\n\n"
-    for note in user_notes[:10]:  # Limit to 10 to avoid flooding
-        title_preview = f"`{note['title'][:20]}...`" if "title" in note and note["title"] else "`(No title)`"
-        content_preview = f"`{note.get('content', note.get('text', ''))[:30]}...`" if note.get("content", note.get("text", "")) else "`(No content)`"
-        message += f"{title_preview}\n"
+    message = f"<b>List of notes ({len(user_notes)}):</b>\n\n"
+    for note in user_notes[:10]:
+        title = note.get("title", "(No title)")
+        message += f"- <b><code>{title}</code></b>\n"
     if len(user_notes) > 10:
         message += f"...and {len(user_notes) - 10} more."
-    await update.message.reply_text(message, parse_mode="Markdown")
+    await update.message.reply_text(message, parse_mode="HTML")
 
 async def deletenote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Delete a note by title."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+
     if not await check_user_approval(user_id):
         await update.message.reply_text("❌ You are not approved to use this command.")
         return
@@ -198,25 +213,58 @@ async def deletenote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Usage: /deletenote <title>")
         return
 
-    title = " ".join(context.args)
+    title = " ".join(context.args).lower()
     notes = load_notes()
-    is_group = update.effective_chat.type in ["group", "supergroup"]
+    user_notes = get_user_notes(notes, chat_id, user_id, is_group)
 
-    # Find the most recent note with the exact title
-    note_to_delete = None
     matching_notes = [
-        note for note in notes["notes"]
-        if "title" in note and note["title"] and title.lower() == note["title"].lower() and
-           ((note["chat_id"] == (chat_id if is_group else user_id) or
-             (note["user_id"] == user_id and not note["is_group"])) or user_id == ADMIN_CHAT_ID)
+        note for note in user_notes
+        if note.get("title", "").lower() == title
     ]
-    if matching_notes:
-        note_to_delete = max(matching_notes, key=lambda x: x["timestamp"])  # Most recent
-
-    if not note_to_delete:
+    if not matching_notes:
         await update.message.reply_text(f"❌ No note found with title '{title}' or you don't have permission to delete it.")
         return
 
+    note_to_delete = max(matching_notes, key=lambda x: x["timestamp"])
     notes["notes"].remove(note_to_delete)
     save_notes(notes)
-    await update.message.reply_text(f"🗑️ Note '{title}' deleted.")
+    await update.message.reply_text(f"🗑️ Note '{note_to_delete['title']}' deleted.")
+
+async def handle_hashtag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Retrieve note content when a message starts with #notename."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    is_group = update.effective_chat.type in ["group", "supergroup"]
+
+    if not await check_user_approval(user_id):
+        await update.message.reply_text("❌ You are not approved to use this feature.")
+        return
+    if user_id != ADMIN_CHAT_ID and not await check_command_enabled('getnote', user_id):
+        await update.message.reply_text("❌ The note retrieval feature is currently disabled.")
+        return
+
+    text = update.message.text.strip()
+    if not text.startswith("#"):
+        return
+
+    query = text[1:].strip().lower()
+    if not query:
+        return
+
+    notes = load_notes()
+    user_notes = get_user_notes(notes, chat_id, user_id, is_group)
+
+    matching_notes = [
+        note for note in user_notes
+        if note.get("title", "").lower() == query
+    ]
+    if matching_notes:
+        note = max(matching_notes, key=lambda x: x["timestamp"])
+        content = note.get("content", note.get("text", ""))
+        await update.message.reply_text(content)
+        return
+
+    await update.message.reply_text(f"❌ No note found with title '{query}'.")
+
+# Handler for hashtag messages
+hashtag_handler = MessageHandler(filters.Regex(r'^#[\w\s\-\_]+'), handle_hashtag)
