@@ -3,7 +3,6 @@ from telegram.ext import ContextTypes
 import json
 from config import ADMIN_CHAT_ID
 
-# Load command states from a JSON file
 def load_command_states():
     try:
         with open('command_states.json', 'r') as f:
@@ -19,7 +18,11 @@ def load_command_states():
             'video': True,
             'bgremove': True,
             'ai': True,
-            'help': True
+            'help': True,
+            'store': True,
+            'getnote': True,
+            'listnotes': True,
+            'deletenote': True
         }
 
 # Save command states to a JSON file
