@@ -12,9 +12,21 @@ from bg_remove import remove_bg
 from ai_instructor import ai_command
 from notes import store, getnote, listnotes, deletenote, hashtag_handler
 
+async def post_init(application):
+    try:
+        await application.bot.send_message(chat_id=ADMIN_CHAT_ID, text="🤖 Bot has started and is now online.")
+    except Exception as e:
+        print(f"Failed to send startup message to admin: {e}")
+
+
 def main() -> None:
-    # Build application with connection pool for better network handling
-    application = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).connection_pool_size(20).build()
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .connection_pool_size(20)
+        .build()
+    )
 
     # Register commands
     application.add_handler(CommandHandler('start', bot_start))
@@ -38,16 +50,16 @@ def main() -> None:
     application.add_handler(CommandHandler('get', getnote))
     application.add_handler(CommandHandler('listnotes', listnotes))
     application.add_handler(CommandHandler('delnote', deletenote))
-    #for notes module
     application.add_handler(hashtag_handler)
-    
 
-    # For interactive shell
     register_shell_handlers(application)
 
-    # Run the bot
+
+    application.post_init = post_init
+
     print("Starting bot polling...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
 
 if __name__ == '__main__':
     main()
