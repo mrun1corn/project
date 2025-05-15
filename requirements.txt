@@ -8,3 +8,7 @@ speedtest-cli
 aiohttp
 aiofiles
 aiocache
+python-docx 
+pymupdf 
+Pillow 
+pytesseract

@@ -9,7 +9,7 @@ from player import play_audio, play_video
 from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
-from ai_instructor import ai_command
+from gemini import ai_command
 from notes import store, getnote, listnotes, deletenote, hashtag_handler
 
 async def post_init(application):
