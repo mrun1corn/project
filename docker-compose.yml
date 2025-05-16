@@ -4,5 +4,5 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: sh -c "apk add --no-cache ffmpeg bash build-base libffi-dev tesseract-ocr && pip install -r requirements.txt && python bot.py"
+    command: sh -c "apk add --no-cache ffmpeg bash build-base libffi-dev && pip install -r requirements.txt && python bot.py"
     restart: unless-stopped
