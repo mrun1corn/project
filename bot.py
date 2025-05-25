@@ -10,7 +10,6 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
 from gemini import ai_command
-from notes import store, getnote, listnotes, deletenote, hashtag_handler
 
 async def post_init(application):
     try:
@@ -46,11 +45,6 @@ def main() -> None:
     application.add_handler(CommandHandler("revoke", revoke_user))
     application.add_handler(CommandHandler('bgremove', remove_bg))
     application.add_handler(CommandHandler('ai', ai_command))
-    application.add_handler(CommandHandler('store', store))
-    application.add_handler(CommandHandler('get', getnote))
-    application.add_handler(CommandHandler('listnotes', listnotes))
-    application.add_handler(CommandHandler('delnote', deletenote))
-    application.add_handler(hashtag_handler)
 
     register_shell_handlers(application)
 
