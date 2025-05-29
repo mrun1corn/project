@@ -66,11 +66,15 @@ async def handle_video_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         print(f"Received message: {message_text}")
         video_patterns = [
             r'https?://(?:www\.)?fb\.watch/[\w\-]+/?(?:\?.*)?',  # fb.watch
+            r'https?://(?:www\.)?fb\.com/watch/[\w\-]+/?(?:\?.*)?',  # fb.com/watch (path style)
+            r'https?://(?:www\.)?fb\.com/watch\?v=\d+/?(?:&.*)?',  # fb.com/watch?v=...
+            r'https?://(?:www\.)?facebook\.com/watch/[\w\-]+/?(?:\?.*)?',  # facebook.com/watch (path style)
+            r'https?://(?:www\.)?facebook\.com/watch\?v=\d+/?(?:&.*)?',  # facebook.com/watch?v=...
             r'https?://(?:www\.)?facebook\.com/reel/\d+/?(?:\?.*)?',  # Reels
             r'https?://(?:www\.)?facebook\.com/share/v/[\w\-]+/?(?:\?.*)?',  # Share/v
             r'https?://(?:www\.)?facebook\.com/share/r/[\w\-]+/?(?:\?.*)?',  # Share/r
             r'https?://(?:www\.)?facebook\.com/[^/]+/videos/\w+/?(?:\?.*)?',  # Videos
-            r'https?://(?:www\.)?instagram\.com/reel/[\w\-]+/?(?:\?.*)?'  # Instagram Reels
+            r'https?://(?:www\.)?instagram\.com/reel/[\w\-]+/?(?:\?.*)?',  # Instagram Reels
         ]
         url = None
         for pattern in video_patterns:

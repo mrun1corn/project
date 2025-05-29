@@ -48,7 +48,21 @@ def main() -> None:
     application.add_handler(CommandHandler('ai', ai_command))
 
      # Register video/reel link handler
-    video_url_pattern = r'https?://(www\.)?(fb\.watch/[\w\-]+/?|facebook\.com/reel/\d+/?|facebook\.com/share/v/[\w\-]+/?|facebook\.com/share/r/[\w\-]+/?|facebook\.com/[^/]+/videos/\d+/?|instagram\.com/reel/[\w\-]+/?)'
+    video_url_pattern = (
+        r'https?://(www\.)?('
+        r'fb\.watch/[\w\-]+/?|'
+        r'fb\.com/watch/[\w\-]+/?|'
+        r'fb\.com/watch\?v=\d+/?(?:&.*)?|'
+        r'facebook\.com/watch/[\w\-]+/?|'
+        r'facebook\.com/watch\?v=\d+/?(?:&.*)?|'
+        r'facebook\.com/reel/\d+/?|'
+        r'facebook\.com/share/v/[\w\-]+/?|'
+        r'facebook\.com/share/r/[\w\-]+/?|'
+        r'facebook\.com/[^/]+/videos/\d+/?|'
+        r'instagram\.com/reel/[\w\-]+/?'
+        r')'
+    )
+
     application.add_handler(MessageHandler(filters.Regex(video_url_pattern) & ~filters.COMMAND, handle_video_link))
 
     register_shell_handlers(application)
