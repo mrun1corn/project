@@ -82,7 +82,7 @@ def main() -> None:
     # Bot startup message
     application.post_init = post_init
 
-    print("🚀 Starting bot polling...")
+    print("Starting bot polling...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
