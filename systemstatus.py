@@ -7,11 +7,16 @@ import subprocess
 import os
 import sys
 import platform
+import re
 from comm_checker import command_states, check_user_approval
 from config import ADMIN_CHAT_ID
 
 # Global variable to track bot uptime
 bot_start_time = time.time()
+
+def escape_markdown_v2(text: str) -> str:
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send bot uptime and basic status."""
@@ -26,7 +31,7 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         
         await update.message.reply_text(response, parse_mode="MarkdownV2")
-    except Exception as e:
+    except Exception:
         await update.message.reply_text("❌ Failed to retrieve bot status.")
 
 async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -36,23 +41,31 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     try:
-        # Get system information
         cpu_usage = psutil.cpu_percent(interval=1)
         memory_info = psutil.virtual_memory()
         swap_info = psutil.swap_memory()
         disk_info = psutil.disk_usage('/')
-        cpu_count = psutil.cpu_count(logical=False)  # Physical cores
-        cpu_count_logical = psutil.cpu_count(logical=True)  # Logical CPUs
-        cpu_freq = psutil.cpu_freq().current  # CPU frequency
-        cpu_model = platform.processor()  # CPU model
+        cpu_count = psutil.cpu_count(logical=False)
+        cpu_count_logical = psutil.cpu_count(logical=True)
+        cpu_freq = psutil.cpu_freq()
+        cpu_freq_current = cpu_freq.current if cpu_freq else 0.0
 
-        # System information
-        system = platform.system()  # Operating System
-        node = platform.node()  # System name (hostname)
-        release = platform.release()  # OS version
-        architecture = platform.architecture()[0]  # Architecture (32-bit/64-bit)
+        cpu_model = platform.processor()
+        if not cpu_model:
+            try:
+                with open('/proc/cpuinfo') as f:
+                    for line in f:
+                        if line.startswith('Hardware') or line.startswith('Model'):
+                            cpu_model = line.split(':')[1].strip()
+                            break
+            except Exception:
+                cpu_model = "Unknown"
 
-        # Prepare response message
+        system = platform.system()
+        node = platform.node()
+        release = platform.release()
+        architecture = platform.architecture()[0]
+
         response = (
             f"*System Status*\n"
             f"🖥️ *System:* {system} {release} ({architecture})\n"
@@ -60,7 +73,7 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"⚙️ *CPU Model:* `{cpu_model}`\n"
             f"🧮 *Physical Cores:* {cpu_count}\n"
             f"🔢 *Logical CPUs:* {cpu_count_logical}\n"
-            f"🔄 *CPU Frequency:* {cpu_freq:.2f} MHz\n"
+            f"🔄 *CPU Frequency:* {cpu_freq_current:.2f} MHz\n"
             f"📊 *CPU Usage:* {cpu_usage}%\n"
             f"🧠 *Memory Usage:* {memory_info.percent}% "
             f"({memory_info.used / (1024 ** 2):.2f} MB used of {memory_info.total / (1024 ** 2):.2f} MB)\n"
@@ -70,22 +83,18 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"({disk_info.used / (1024 ** 3):.2f} GB used of {disk_info.total / (1024 ** 3):.2f} GB)\n"
         )
 
-        # Check for battery info and append if available
         battery = psutil.sensors_battery()
         if battery:
             battery_status = f"🔋 *Battery Status:* {battery.percent}% {'🔌' if battery.power_plugged else '⚡'}\n"
-            response += battery_status  # Append battery status to response
+            response += battery_status
 
-        # Escape special characters in response for MarkdownV2
-        response = response.replace(".", "\\.").replace("-", "\\-").replace("_", "\\_").replace("*", "\\*") \
-                           .replace("[", "\\[").replace("]", "\\]").replace("(", "\\(").replace(")", "\\)") \
-                           .replace("~", "\\~").replace("`", "\\`")
+        response_escaped = escape_markdown_v2(response)
 
-        # Send the response using MarkdownV2
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=response, parse_mode='MarkdownV2')
+        await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       text=response_escaped,
+                                       parse_mode='MarkdownV2')
     except Exception as e:
-        print(f"Error in system_status: {e}")
-
+        await update.message.reply_text(f"❌ Failed to retrieve system status:\n`{str(e)}`", parse_mode='MarkdownV2')
 
 async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Run a speed test with progress updates."""
@@ -117,7 +126,7 @@ async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     except speedtest_lib.ConfigRetrievalError:
         await msg.edit_text("❌ Could not connect to speedtest servers.")
-    except Exception as e:
+    except Exception:
         await msg.edit_text("❌ Speed test failed.")
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,7 +161,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.edit_text(f"❌ Ping to {host} failed:\n\n{result.stderr}\n")
     except subprocess.TimeoutExpired:
         await msg.edit_text(f"⌛ Ping to {host} timed out.")
-    except Exception as e:
+    except Exception:
         await msg.edit_text(f"❌ Error pinging {host}.")
 
 async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
