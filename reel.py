@@ -46,12 +46,16 @@ async def get_video_title(url):
 
 
 async def download_with_ytdlp(url, output_path):
-    """Download video using yt-dlp."""
+    """Download video using yt-dlp and fix with ffmpeg for Telegram compatibility."""
     try:
+        # Download with yt-dlp forcing mp4 container, m4a audio, filesize limit
         cmd = [
             "yt-dlp",
-            "-f", "bestvideo+bestaudio",
-            "--merge-output-format", "mp4",
+            "-f", "bv*+ba/b",                  # best video + best audio
+            "--recode-video", "mp4",           # force mp4 container and compatible codecs
+            "--audio-format", "m4a",           # standard audio format
+            "--no-playlist",                   # no playlists
+            "--max-filesize", "40M",           # filesize limit
             "-o", output_path,
             url
         ]
@@ -61,10 +65,25 @@ async def download_with_ytdlp(url, output_path):
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
-        if process.returncode == 0:
-            print(f"Downloaded video to {output_path}")
-        else:
+        if process.returncode != 0:
             raise Exception(f"yt-dlp failed: {stderr.decode()}")
+
+        # Fix metadata for streaming with ffmpeg
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-i", output_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            output_path + ".fixed.mp4"
+        ]
+        proc = subprocess.run(ffmpeg_cmd, capture_output=True)
+        if proc.returncode != 0:
+            print(f"FFmpeg fix failed: {proc.stderr.decode()}")
+        else:
+            os.replace(output_path + ".fixed.mp4", output_path)
+
+        print(f"Downloaded and fixed video to {output_path}")
+
     except Exception as e:
         print(f"Error downloading video: {e}")
         raise
@@ -73,6 +92,7 @@ async def download_with_ytdlp(url, output_path):
 async def handle_video_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle detected Facebook or Instagram video/reel links."""
     from comm_checker import check_user_approval, command_states  # Delayed import
+
     progress_message = None
     task_id = str(uuid.uuid4())[:4]
     print(f"Starting video task {task_id} for user {update.effective_user.id}")
@@ -119,8 +139,11 @@ async def handle_video_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"Processing video: {resolved_url}"
         )
 
-        # Get video title
+        # Get video title and clean hashtags
         video_title = await get_video_title(resolved_url)
+        if video_title:
+            video_title = re.sub(r'#\S+', '', video_title).strip()
+
         caption_text = f"🎬 {video_title}" if video_title else None
 
         DOWNLOAD_DIR = 'downloads'
@@ -128,7 +151,7 @@ async def handle_video_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         video_file_path = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4().hex}.mp4")
 
         try:
-            # Check file size
+            # Check file size from headers before download (optional, may not always work)
             async with aiohttp.ClientSession() as session:
                 async with session.head(resolved_url, timeout=5) as head_response:
                     file_size = int(head_response.headers.get('Content-Length', 0))
