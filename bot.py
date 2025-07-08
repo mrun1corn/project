@@ -17,6 +17,7 @@ from shell import register_shell_handlers
 from bg_remove import remove_bg
 from gemini import ai_command
 from reel import handle_video_link
+from sticker import kang
 
 
 async def post_init(application):
@@ -55,6 +56,7 @@ def main() -> None:
     application.add_handler(CommandHandler("revoke", revoke_user))
     application.add_handler(CommandHandler("bgremove", remove_bg))
     application.add_handler(CommandHandler("ai", ai_command))
+    application.add_handler(CommandHandler("kang", kang))
 
     # Register help command (with buttons and callbacks)
     register_help_handlers(application)
