@@ -10,7 +10,7 @@ from hello import bot_start, jaan
 from subcal import subnet
 from help import register_help_handlers
 from systemstatus import bot_status, system_status, speedtest, ping, reboot
-from comm_checker import enable_command, disable_command, approve_user, revoke_user
+from comm_checker import enable_command, disable_command, approve_user, revoke_user, list_commands_status
 from player import play_audio, play_video
 from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
@@ -57,6 +57,7 @@ def main() -> None:
     application.add_handler(CommandHandler("bgremove", remove_bg))
     application.add_handler(CommandHandler("ai", ai_command))
     application.add_handler(CommandHandler("kang", kang))
+    application.add_handler(CommandHandler("listcommands", list_commands_status))
 
     # Register help command (with buttons and callbacks)
     register_help_handlers(application)

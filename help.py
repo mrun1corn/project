@@ -12,7 +12,8 @@ HELP_TOPICS = {
     "music": "Usage: `/music <name>`\nStreams music with the given name.",
     "video": "Usage: `/video <name>`\nStreams video with the given name.",
     "bgremove": "Removes background from uploaded photo.",
-    "ai": "Chat with the AI. Use `/ai <your prompt>`."
+    "ai": "Chat with the AI. Use `/ai <your prompt>`.",
+    "listcommands": "Lists all available commands and their status.",
 }
 
 def get_resized_keyboard(commands_per_row=2):

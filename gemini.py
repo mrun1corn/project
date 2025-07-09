@@ -140,11 +140,15 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     message = update.message
     user_id = str(update.effective_user.id)
     
-    if user_id != str(ADMIN_CHAT_ID) and not await check_user_approval(int(user_id)):
+    user_id = update.effective_user.id # Get as int directly
+
+    # Check user approval
+    if not await check_user_approval(user_id):
         await message.reply_text("🔒 You're not approved to use this command.")
         return
     
-    if not command_states.get('ai', True) and user_id != str(ADMIN_CHAT_ID):
+    # Check if command is enabled
+    if not await check_command_enabled('ai'):
         await message.reply_text("❌ AI command is currently disabled.")
         return
 
