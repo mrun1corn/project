@@ -2,6 +2,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
 
 HELP_TOPICS = {
+    "note_usage": {
+    "description": "🗒️ Usage and help for saving, retrieving, and deleting notes.",
+    "category": "main",
+    "subcommands": {
+        "keep": "📝 Usage: `/keep \"note content\" notename` or reply with `/keep notename`\nSaves a note in group/private chat.",
+        "notes": "📋 Usage: `/notes`\nDisplays a list of saved notes in the chat.",
+        "#notename": "📖 Usage: `#notename`\nRetrieves the note with the given name.",
+        "delete": "🗑️ Usage: `/delete notename`\nDeletes a saved note. Group deletion requires admin privileges."
+        }
+    },
     "general": {
         "description": "📚 General commands for interacting with the bot.",
         "category": "main",
@@ -59,6 +69,7 @@ HELP_TOPICS = {
         }
     }
 }
+
 
 def get_resized_keyboard(commands, commands_per_row=3):
     buttons = []

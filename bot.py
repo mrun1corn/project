@@ -1,3 +1,4 @@
+import os
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,7 +20,7 @@ from gemini import ai_command
 from reel import handle_video_link
 from sticker import kang
 from group_management import register_group_management
-
+from notes import register_note_handlers
 
 async def post_init(application):
     try:
@@ -30,7 +31,6 @@ async def post_init(application):
     except Exception as e:
         print(f"Failed to send startup message to admin: {e}")
 
-
 def main() -> None:
     application = (
         ApplicationBuilder()
@@ -39,6 +39,9 @@ def main() -> None:
         .connection_pool_size(20)
         .build()
     )
+
+    # Register notes handlers first to ensure high priority for #notename messages
+    register_note_handlers(application)
 
     # Register command handlers
     application.add_handler(CommandHandler("start", bot_start))
@@ -83,15 +86,14 @@ def main() -> None:
     # Register shell command handlers
     register_shell_handlers(application)
 
-    # Bot startup message
-    application.post_init = post_init
-
     # Register group management handlers
     register_group_management(application)
 
+    # Bot startup message
+    application.post_init = post_init
+
     print("Starting bot polling...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
 
 if __name__ == '__main__':
     main()
