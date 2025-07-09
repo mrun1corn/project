@@ -18,6 +18,7 @@ from bg_remove import remove_bg
 from gemini import ai_command
 from reel import handle_video_link
 from sticker import kang
+from group_management import register_group_management
 
 
 async def post_init(application):
@@ -84,6 +85,9 @@ def main() -> None:
 
     # Bot startup message
     application.post_init = post_init
+
+    # Register group management handlers
+    register_group_management(application)
 
     print("Starting bot polling...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)

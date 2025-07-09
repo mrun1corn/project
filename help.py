@@ -2,56 +2,145 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
 
 HELP_TOPICS = {
-    "start": "Starts the bot and greets the user.",
-    "subnet": "Usage: `/subnet <ip> <mask>`\nCalculates the subnet info.",
-    "help": "Shows this help message with interactive buttons.",
-    "status": "Shows the bot's health and uptime.",
-    "sysinfo": "Displays system information (CPU, memory, disk, etc).",
-    "speedtest": "Runs a speedtest on the bot's server.",
-    "ping": "Measures response time from the bot's host.",
-    "music": "Usage: `/music <name>`\nStreams music with the given name.",
-    "video": "Usage: `/video <name>`\nStreams video with the given name.",
-    "bgremove": "Removes background from uploaded photo.",
-    "ai": "Chat with the AI. Use `/ai <your prompt>`.",
-    "listcommands": "Lists all available commands and their status.",
+    "general": {
+        "description": "📚 General commands for interacting with the bot.",
+        "category": "main",
+        "subcommands": {
+            "start": "🚀 Starts the bot and greets the user.",
+            "help": "📚 Shows this help menu with interactive buttons.",
+            "listcommands": "📜 Lists all available commands and their status."
+        }
+    },
+    "system": {
+        "description": "🛠️ Utilities for system information and diagnostics.",
+        "category": "main",
+        "subcommands": {
+            "status": "🩺 Shows the bot's health and uptime.",
+            "sysinfo": "💻 Displays system information (CPU, memory, disk, etc.).",
+            "speedtest": "⚡ Runs a speed test on the bot's server.",
+            "ping": "🏓 Measures response time from the bot's host.",
+            "subnet": "🌐 Usage: `/subnet <ip> <mask>`\nCalculates subnet information."
+        }
+    },
+    "media": {
+        "description": "🎥 Commands for handling media content.",
+        "category": "main",
+        "subcommands": {
+            "music": "🎵 Usage: `/music <name>`\nStreams music with the given name.",
+            "video": "🎥 Usage: `/video <name>`\nStreams video with the given name.",
+            "bgremove": "🖼️ Removes the background from an uploaded photo."
+        }
+    },
+    "ai": {
+        "description": "🤖 Commands for AI interactions.",
+        "category": "main",
+        "subcommands": {
+            "ai": "🤖 Usage: `/ai <prompt>`\nChat with the AI."
+        }
+    },
+    "group_manager": {
+        "description": "👥 Manage your Telegram group with these commands (admin only).",
+        "category": "main",
+        "subcommands": {
+            "welcome": "📩 Usage: `/welcome [message|off]`\nSet or disable a welcome message for new members.",
+            "goodbye": "👋 Usage: `/goodbye [message|off]`\nSet or disable a goodbye message for leaving members.",
+            "filter": "🔍 Usage: `/filter <keyword> <reply>`\nAdd a keyword filter with a custom reply.",
+            "stop": "🛑 Usage: `/stop <keyword>`\nRemove a keyword filter.",
+            "mute": "🔇 Usage: `/mute`\nMute a user (reply to their message).",
+            "unmute": "🔊 Usage: `/unmute`\nUnmute a user (reply to their message).",
+            "kick": "👢 Usage: `/kick`\nKick a user from the group (reply to their message).",
+            "ban": "🚫 Usage: `/ban`\nBan a user from the group (reply to their message).",
+            "unban": "✅ Usage: `/unban <user_id>`\nUnban a user by their ID.",
+            "lock": "🔒 Usage: `/lock <type|all>`\nLock specific chat features (e.g., gif, sticker, all).",
+            "unlock": "🔓 Usage: `/unlock <type|all>`\nUnlock specific chat features.",
+            "promote": "⬆️ Usage: `/promote [title]`\nPromote a user to admin with a custom title (reply to their message).",
+            "permission": "⚙️ Usage: `/permission <type>`\nGrant a specific permission to an admin (reply to their message).",
+            "demote": "⬇️ Usage: `/demote`\nDemote an admin (reply to their message)."
+        }
+    }
 }
 
-def get_resized_keyboard(commands_per_row=2):
+def get_resized_keyboard(commands, commands_per_row=3):
     buttons = []
     row = []
-    for i, cmd in enumerate(HELP_TOPICS.keys(), 1):
+    for i, cmd in enumerate(commands, 1):
         row.append(InlineKeyboardButton(f"/{cmd}", callback_data=f"help_{cmd}"))
         if i % commands_per_row == 0:
             buttons.append(row)
             row = []
-    if row:  # append any leftover buttons
+    if row:  # Append any leftover buttons
         buttons.append(row)
     return InlineKeyboardMarkup(buttons)
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes):
     if update.effective_chat.type != "private":
         bot_username = (await context.bot.get_me()).username
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📬 Click here for help", url=f"https://t.me/{bot_username}?start=help")]
+            [InlineKeyboardButton("📬 Get Help in Private", url=f"https://t.me/{bot_username}?start=help")]
         ])
-        await update.message.reply_text("Click below to get help in private 👇", reply_markup=keyboard)
+        await update.message.reply_text(
+            "Click below to view the help menu in a private chat 👇",
+            reply_markup=keyboard
+        )
         return
 
     await update.message.reply_text(
-        "📚 *Available Commands*\nSelect a command to view detailed help:",
-        reply_markup=get_resized_keyboard(commands_per_row=2),
+        "📚 *Bot Command Categories*\n\nSelect a category below to view its commands:",
+        reply_markup=get_resized_keyboard([cmd for cmd, data in HELP_TOPICS.items() if data["category"] == "main"], commands_per_row=3),
         parse_mode="Markdown"
     )
 
-async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_callback(update: Update, context: ContextTypes):
     query = update.callback_query
     await query.answer()
 
     command = query.data.replace("help_", "")
-    description = HELP_TOPICS.get(command, "No help available for this command.")
 
+    if command == "main":
+        # Show the main categories menu
+        await query.edit_message_text(
+            text="📚 *Bot Command Categories*\n\nSelect a category below to view its commands:",
+            reply_markup=get_resized_keyboard([cmd for cmd, data in HELP_TOPICS.items() if data["category"] == "main"], commands_per_row=3),
+            parse_mode="Markdown"
+        )
+        return
+
+    if command in HELP_TOPICS and "subcommands" in HELP_TOPICS[command]:
+        # Show submenu for category commands
+        subcommands = HELP_TOPICS[command].get("subcommands", {})
+        keyboard = get_resized_keyboard(subcommands.keys(), commands_per_row=3)
+        # Convert inline_keyboard to list, append back button, and create new InlineKeyboardMarkup
+        keyboard_list = list(keyboard.inline_keyboard)
+        keyboard_list.append([InlineKeyboardButton("⬅️ Back to Categories", callback_data="help_main")])
+        keyboard = InlineKeyboardMarkup(keyboard_list)
+        await query.edit_message_text(
+            text=f"{HELP_TOPICS[command]['description']}\n\nSelect a command to view its details:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    # Check if the command is a subcommand
+    for category, data in HELP_TOPICS.items():
+        if "subcommands" in data and command in data["subcommands"]:
+            description = data["subcommands"][command]
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"⬅️ Back to {category.title()} Commands", callback_data=f"help_{category}")]
+            ])
+            await query.edit_message_text(
+                text=f"*Help for /{command}:*\n\n{description}",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+            return
+
+    # Handle invalid commands
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back to Categories", callback_data="help_main")]
+    ])
     await query.edit_message_text(
-        text=f"*Help for /{command}:*\n\n{description}",
+        text="❌ No help available for this command.",
+        reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
