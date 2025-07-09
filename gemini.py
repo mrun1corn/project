@@ -10,7 +10,6 @@ import html
 from telegram import Update
 from telegram.ext import ContextTypes, Application, CommandHandler
 from telegram.error import BadRequest
-from aiocache import Cache, cached
 
 # Import necessary configurations from config.py
 try:
@@ -27,24 +26,16 @@ from comm_checker import check_user_approval, command_states
 # --- Constants ---
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 CONTEXT_FILE = "user_context.json"
-CONTEXT_HISTORY_LIMIT = 5
-PROGRESS_UPDATE_INTERVAL = 1.5
+# CONTEXT_HISTORY_LIMIT = 5 # This will now be managed by token count or number of turns
 MAX_MESSAGE_LENGTH = 4096
-
+PROGRESS_UPDATE_INTERVAL = 1.5
+MAX_HISTORY_TURNS = 10 # Limit conversation history to 10 turns (user + model)
 
 # --- Utility Functions ---
 
 def sanitize_response(text: str) -> str:
     text = re.sub(r'\n\s*\n+', '\n\n', text.strip())
     return text
-
-def extract_context_info(prompt: str, response: str) -> dict:
-    info = {}
-    if "friend" in prompt.lower() and "name" in prompt.lower():
-        match = re.search(r'\b[A-Z][a-z]+\b', response)
-        if match:
-            info["friend_name"] = match.group()
-    return info
 
 def load_context() -> dict:
     if os.path.exists(CONTEXT_FILE):
@@ -63,22 +54,28 @@ async def save_context_async(context: dict):
     except Exception:
         pass
 
-def gemini_cache_key_builder(func, *args, **kwargs):
-    user_id = kwargs.get("user_id", "anonymous")
-    prompt = args[0] if args else "noprompt"
-    return f"gemini_response:{user_id}:{prompt[:100]}"
-
-@cached(ttl=3600, cache=Cache.MEMORY, key_builder=gemini_cache_key_builder)
-async def get_gemini_response(prompt: str, file_data: str = None, file_mime_type: str = None, user_id: str = None) -> tuple[str, float]:
+async def get_gemini_response(conversation_history: list, file_data: str = None, file_mime_type: str = None) -> tuple[str, float]:
     start = time.time()
+
+    # The Gemini API expects 'contents' to be a list of messages
+    # Each message has a 'role' (user/model) and 'parts')
+    # The last message in 'contents' should be the current user's prompt
     
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+    # Construct the current user's message parts
+    current_user_parts = []
+    if conversation_history and conversation_history[-1].get("parts"):
+        # Assuming the last message in history is the current user's text prompt
+        current_user_parts.extend(conversation_history[-1]["parts"])
+
     if file_data and file_mime_type:
-        payload["contents"][0]["parts"].append({
+        current_user_parts.append({
             "inlineData": {"mimeType": file_mime_type, "data": file_data}
         })
+    
+    # Create the full payload with conversation history
+    payload = {
+        "contents": conversation_history[:-1] + [{"role": "user", "parts": current_user_parts}]
+    }
     
     headers = {"Content-Type": "application/json"}
 
@@ -106,33 +103,12 @@ async def get_gemini_response(prompt: str, file_data: str = None, file_mime_type
                 reply = candidates[0]["content"]["parts"][0]["text"]
                 elapsed = time.time() - start
                 return reply.strip(), elapsed
-        except aiohttp.client_exceptions.ClientConnectorError as e:
-            return f"⚠️ Network error connecting to Gemini API. Please check your internet connection.", 0.0
+        except aiohttp.client_exceptions.ClientConnectorError:
+            return "⚠️ Network error connecting to Gemini API. Please check your internet connection.", 0.0
         except asyncio.TimeoutError:
-            return f"⚠️ Gemini API request timed out. Please try again.", 0.0
+            return "⚠️ Gemini API request timed out. Please try again.", 0.0
         except Exception as e:
             return f"⚠️ An unexpected error occurred while contacting Gemini: {str(e)}", 0.0
-
-async def build_prompt(user_id: str, prompt: str) -> tuple[str, dict, list, dict]:
-    user_context = load_context()
-    user_data = user_context.get(user_id, {"memory": {}, "history": []})
-    memory = user_data["memory"]
-    history = user_data["history"]
-
-    prompt_lower = prompt.lower()
-    full_prompt = f"Answer this: {prompt}"
-
-    if "friend" in prompt_lower and "name" in prompt_lower and "friend_name" in memory:
-        full_prompt = f"My friend's name is {memory['friend_name']}.\n{prompt}"
-    elif any(k in prompt_lower for k in ["more", "continue", "next", "follow up", "tell me more"]):
-        if history:
-            full_prompt = f"Earlier we discussed: '{history[-1]}'\nNow: {prompt}"
-    
-    history.append(prompt)
-    if len(history) > CONTEXT_HISTORY_LIMIT:
-        history = history[-CONTEXT_HISTORY_LIMIT:]
-    
-    return full_prompt, memory, history, user_context
 
 async def process_file(file_path: str, file_name: str) -> tuple[str, str]:
     try:
@@ -172,12 +148,18 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("❌ AI command is currently disabled.")
         return
 
+    # Load user context
+    user_contexts = load_context()
+    user_data = user_contexts.get(user_id, {"history": [], "memory": {}})
+    conversation_history = user_data["history"]
+    
     replied_message = message.reply_to_message
     file_data = None
     mime_type = None
     
-    prompt = " ".join(context.args) if context.args else ""
+    prompt_text = " ".join(context.args) if context.args else ""
 
+    # Handle file attachments
     if replied_message:
         file = None
         file_name = None
@@ -198,30 +180,48 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
                 file_data, mime_type = await process_file(temp_file_path, file_name)
                 
-                if "Error" in file_data:
+                if "Error" in file_data: # process_file returns error string on failure
                     await message.reply_text(file_data)
                     return
                 
-                if not prompt:
-                    prompt = "Describe the content of this file."
+                if not prompt_text:
+                    prompt_text = "Describe the content of this file."
             except Exception as e:
                 await message.reply_text(f"❌ Failed to process the attached file: {e}")
                 return
             finally:
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
-        elif replied_message.text and not prompt:
-            prompt = replied_message.text
+        elif replied_message.text and not prompt_text:
+            prompt_text = replied_message.text
 
 
-    if not prompt and not (file_data and mime_type):
+    if not prompt_text and not (file_data and mime_type):
         await message.reply_text("Try: `/ai what is Python?` or reply to a file/image with a query.")
         return
     
     progress_msg = await message.reply_text("🧠 Thinking...")
     
-    full_prompt, memory, history, user_context = await build_prompt(user_id, prompt)
+    # Add current user message to history
+    user_message_parts = []
+    if prompt_text:
+        user_message_parts.append({"text": prompt_text})
+    if file_data and mime_type:
+        user_message_parts.append({"inlineData": {"mimeType": mime_type, "data": file_data}})
+    
+    # Ensure there's at least one part in the user message
+    if not user_message_parts:
+        await message.reply_text("❌ No valid input provided for Gemini.")
+        return
 
+    conversation_history.append({"role": "user", "parts": user_message_parts})
+
+    # Truncate history if it exceeds MAX_HISTORY_TURNS
+    # Each turn consists of a user message and a model message.
+    # So, MAX_HISTORY_TURNS * 2 messages in total.
+    if len(conversation_history) > MAX_HISTORY_TURNS * 2:
+        conversation_history = conversation_history[-(MAX_HISTORY_TURNS * 2):]
+    
     dots = ["", ".", "..", "..."]
     dot_index = 0
     start_time = time.time()
@@ -241,10 +241,9 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     try:
         response_text, elapsed = await get_gemini_response(
-            full_prompt, 
-            file_data=file_data, 
-            file_mime_type=mime_type, 
-            user_id=user_id
+            conversation_history=conversation_history,
+            file_data=file_data, # Pass file data for the *current* turn
+            file_mime_type=mime_type
         )
         
         escaped_html = html.escape(response_text)
@@ -255,10 +254,13 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         
         await progress_msg.edit_text(f"{sanitized_reply}\n\n✨ Generated in {elapsed:.1f}s", parse_mode="HTML")
         
-        new_info = extract_context_info(prompt, response_text)
-        memory.update(new_info)
-        user_context[user_id] = {"memory": memory, "history": history}
-        asyncio.create_task(save_context_async(user_context))
+        # Add model's response to history
+        conversation_history.append({"role": "model", "parts": [{"text": response_text}]})
+        
+        # Save updated context
+        user_data["history"] = conversation_history
+        user_contexts[user_id] = user_data
+        asyncio.create_task(save_context_async(user_contexts))
         
     finally:
         progress_task.cancel()
