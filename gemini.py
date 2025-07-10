@@ -21,7 +21,7 @@ except ImportError:
 
 
 # --- Mock for comm_checker (replace with your actual implementation) ---
-from comm_checker import check_user_approval, command_states
+from comm_checker import check_user_approval, command_states, check_command_enabled
 
 # --- Constants ---
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
