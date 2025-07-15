@@ -152,4 +152,4 @@ def register_shell_handlers(application) -> None:
     """Register shell command handlers."""
     application.add_handler(CommandHandler('shell', start_shell))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_shell_input))
-    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(CallbackQueryHandler(handle_callback, pattern='^cmd_'))
