@@ -89,32 +89,41 @@ def parse_time(time_str: str) -> int:
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     group = load_group(chat_id)
-    if not context.args:
-        await update.message.reply_text(f"Welcome message:\n{group['welcome'] or 'disabled'}")
-        return
-    arg = " ".join(context.args)
-    group['welcome'] = None if arg.lower() in ['off', 'no'] else arg
 
+    if not context.args:
+        await update.message.reply_text(f"Welcome message:\n{group['welcome'] or '❌ Disabled'}")
+        return
+
+    arg = " ".join(context.args)
+    if arg.lower() in ['off', 'no']:
+        group['welcome'] = None
+        await update.message.reply_text("❌ Welcome message disabled.")
     else:
         group['welcome'] = arg
         await update.message.reply_text(f"✅ Welcome message set to:\n{arg}")
+
     save_group(chat_id, group)
-    
-        
+
+
 @admin_only
 async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     group = load_group(chat_id)
+
     if not context.args:
-        await update.message.reply_text(f"Goodbye message:\n{group['goodbye'] or 'disabled'}")
+        await update.message.reply_text(f"Goodbye message:\n{group['goodbye'] or '❌ Disabled'}")
         return
+
     arg = " ".join(context.args)
-    group['goodbye'] = None if arg.lower() in ['off', 'no'] else arg
-    await update.message.reply_text("✅ Goodbye message disabled.")
+    if arg.lower() in ['off', 'no']:
+        group['goodbye'] = None
+        await update.message.reply_text("❌ Goodbye message disabled.")
     else:
         group['goodbye'] = arg
         await update.message.reply_text(f"✅ Goodbye message set to:\n{arg}")
+
     save_group(chat_id, group)
+
 
 
 async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
