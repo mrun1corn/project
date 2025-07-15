@@ -94,7 +94,10 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     arg = " ".join(context.args)
     group['welcome'] = None if arg.lower() in ['off', 'no'] else arg
-    await update.message.reply_text("✅ Welcome message disabled.")
+
+    else:
+        group['welcome'] = arg
+        await update.message.reply_text(f"✅ Welcome message set to:\n{arg}")
     save_group(chat_id, group)
     
         
@@ -108,6 +111,9 @@ async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     arg = " ".join(context.args)
     group['goodbye'] = None if arg.lower() in ['off', 'no'] else arg
     await update.message.reply_text("✅ Goodbye message disabled.")
+    else:
+        group['goodbye'] = arg
+        await update.message.reply_text(f"✅ Goodbye message set to:\n{arg}")
     save_group(chat_id, group)
 
 
