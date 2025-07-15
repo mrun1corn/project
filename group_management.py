@@ -180,6 +180,9 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text("❌ You must be an admin to mute users.")
         return
+    if await is_admin(update, context):
+        await update.message.reply_text("👊Why trying to mute an admin? do fight")
+        return
     if not update.message.reply_to_message:
         await update.message.reply_text("Reply to a user's message to mute them.")
         return
@@ -210,7 +213,9 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text("❌ You must be an admin to kick users.")
         return
-
+    if await is_admin(update, context):
+        await update.message.reply_text("👊Why fighting with mouth instead of hands?")
+        return
     if not update.message.reply_to_message:
         await update.message.reply_text("Reply to a user's message to kick them.")
         return
@@ -229,6 +234,9 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         await update.message.reply_text("❌ You must be an admin to ban users.")
+        return
+    if await is_admin(update, context):
+        await update.message.reply_text("👊why trying to ban an admin? do fight")
         return
     if not update.message.reply_to_message:
         await update.message.reply_text("Reply to a user's message to ban them.")
