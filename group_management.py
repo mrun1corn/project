@@ -57,25 +57,6 @@ def admin_only(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-def target_not_admin(func):
-    @wraps(func)
-    async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if not update.message.reply_to_message:
-            await update.message.reply_text("Please reply to a user's message.")
-            return
-        target_user_id = update.message.reply_to_message.from_user.id
-        chat_id = update.effective_chat.id
-        try:
-            member = await context.bot.get_chat_member(chat_id, target_user_id)
-            if member.status in ('administrator', 'creator'):
-                await update.message.reply_text("👊 You cannot use this command on an admin.")
-                return
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error checking target's admin status: {e}")
-            return
-        return await func(update, context, *args, **kwargs)
-    return wrapped
-
 
 # --------------------- Helper Functions ---------------------
 
@@ -249,7 +230,6 @@ async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --------------------- Moderation ---------------------
 
 @admin_only
-@target_not_admin
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     await context.bot.restrict_chat_member(
@@ -260,7 +240,6 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔇 User muted.")
 
 @admin_only
-@target_not_admin
 async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     duration_str = context.args[0] if context.args else "1h"
@@ -292,7 +271,6 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔊 User unmuted.")
 
 @admin_only
-@target_not_admin
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     chat_id = update.effective_chat.id
@@ -304,14 +282,12 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed to kick user: {e}")
 
 @admin_only
-@target_not_admin
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     await context.bot.ban_chat_member(update.effective_chat.id, user_id)
     await update.message.reply_text("🚫 User banned.")
 
 @admin_only
-@target_not_admin
 async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     duration_str = context.args[0] if context.args else "1d"
@@ -341,7 +317,6 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --------------------- Warning System ---------------------
 
 @admin_only
-@target_not_admin
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     target_user = update.message.reply_to_message.from_user
@@ -536,7 +511,6 @@ PERMISSION_MAP = {
 }
 
 @admin_only
-@target_not_admin
 async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.reply_to_message.from_user.id
     chat_id = update.effective_chat.id
@@ -606,7 +580,13 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Create a rights object with all False values
-        demote_rights = ChatAdministratorRights.from_defaults()
+        demote_rights = ChatAdministratorRights(
+            can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+            can_restrict_members=False, can_promote_members=False, can_change_info=False,
+            can_invite_users=False, can_pin_messages=False, is_anonymous=False,
+            can_manage_topics=False, can_post_stories=False, can_edit_stories=False,
+            can_delete_stories=False,
+        )
         await context.bot.promote_chat_member(chat_id, user_id, **demote_rights.to_dict())
         await update.message.reply_text("⬇️ User demoted.")
     except Exception as e:
