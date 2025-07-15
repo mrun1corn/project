@@ -4,6 +4,8 @@ import time
 from asyncio import sleep
 from telegram import Update, ChatPermissions, ChatAdministratorRights, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.helpers import escape_markdown
+from telegram.constants import ParseMode
 from functools import wraps
 
 GROUP_DATA_DIR = 'group_data'
@@ -16,7 +18,9 @@ def load_group(chat_id):
     path = _group_file(chat_id)
     if os.path.exists(path):
         with open(path, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+            return data
+
     return {
         'welcome': None,
         'goodbye': None,
@@ -109,17 +113,10 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     arg = " ".join(context.args)
     group['welcome'] = None if arg.lower() in ['off', 'no'] else arg
+    await update.message.reply_text("✅ Welcome message disabled.")
     save_group(chat_id, group)
     
-    if arg.lower() not in ['off', 'no']:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Yes", callback_data="mention_welcome_yes"),
-             InlineKeyboardButton("No", callback_data="mention_welcome_no")]
-        ])
-        await update.message.reply_text("✅ Welcome message updated. Mention user in the message?", reply_markup=keyboard)
-    else:
-        await update.message.reply_text("✅ Welcome message disabled.")
-
+        
 @admin_only
 async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -129,16 +126,9 @@ async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     arg = " ".join(context.args)
     group['goodbye'] = None if arg.lower() in ['off', 'no'] else arg
+    await update.message.reply_text("✅ Goodbye message disabled.")
     save_group(chat_id, group)
 
-    if arg.lower() not in ['off', 'no']:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Yes", callback_data="mention_goodbye_yes"),
-             InlineKeyboardButton("No", callback_data="mention_goodbye_no")]
-        ])
-        await update.message.reply_text("✅ Goodbye message updated. Mention user in the message?", reply_markup=keyboard)
-    else:
-        await update.message.reply_text("✅ Goodbye message disabled.")
 
 async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -167,20 +157,20 @@ async def member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for m in update.message.new_chat_members:
         try:
-            text = msg
-            if not mention_enabled:
-                text = text.replace("{mention}", m.full_name)
-
-            formatted = text.format(
-                first=m.first_name or "",
-                fullname=m.full_name,
-                username=f"@{m.username}" if m.username else "",
+            formatted_text = msg.format(
+                first=escape_markdown(m.first_name or "", version=2),
+                fullname=escape_markdown(m.full_name, version=2),
+                username=escape_markdown(f"@{m.username}" if m.username else "", version=2),
                 mention=m.mention_markdown_v2(),
-                chatname=update.effective_chat.title or ""
+                chatname=escape_markdown(update.effective_chat.title or "", version=2)
             )
-            await update.message.reply_text(formatted, parse_mode="MarkdownV2")
+            if not mention_enabled:
+                # If mentions are disabled, replace the markdown mention with plain full name
+                formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
+            await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception:
-            await update.message.reply_text(msg)
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+
 
 async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -194,20 +184,19 @@ async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = update.message.left_chat_member
 
     try:
-        text = msg
-        if not mention_enabled:
-            text = text.replace("{mention}", m.full_name)
-
-        formatted = text.format(
-            first=m.first_name or "",
-            fullname=m.full_name,
-            username=f"@{m.username}" if m.username else "",
+        formatted_text = msg.format(
+            first=escape_markdown(m.first_name or "", version=2),
+            fullname=escape_markdown(m.full_name, version=2),
+            username=escape_markdown(f"@{m.username}" if m.username else "", version=2),
             mention=m.mention_markdown_v2(),
-            chatname=update.effective_chat.title or ""
+            chatname=escape_markdown(update.effective_chat.title or "", version=2)
         )
-        await update.message.reply_text(formatted, parse_mode="MarkdownV2")
+        if not mention_enabled:
+            # If mentions are disabled, replace the markdown mention with plain full name
+            formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
+        await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
-        await update.message.reply_text(msg)
+        await context.bot.send_message(chat_id=chat_id, text=msg)
 
 async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -668,26 +657,7 @@ def register_group_management(app):
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, member_left))
     
     # Service message handler for auto-deletion
-    service_message_filters = (
-        filters.StatusUpdate.NEW_CHAT_MEMBERS |
-        filters.StatusUpdate.LEFT_CHAT_MEMBER |
-        filters.StatusUpdate.NEW_CHAT_TITLE |
-        filters.StatusUpdate.NEW_CHAT_PHOTO |
-        filters.StatusUpdate.DELETE_CHAT_PHOTO |
-        filters.StatusUpdate.GROUP_CHAT_CREATED |
-        filters.StatusUpdate.SUPERGROUP_CHAT_CREATED |
-        filters.StatusUpdate.CHANNEL_CHAT_CREATED |
-        filters.StatusUpdate.MESSAGE_AUTO_DELETE_TIMER_CHANGED |
-        filters.StatusUpdate.MIGRATE_TO_CHAT_ID |
-        filters.StatusUpdate.MIGRATE_FROM_CHAT_ID |
-        filters.StatusUpdate.PINNED_MESSAGE |
-        filters.StatusUpdate.UNPINNED_MESSAGE |
-        filters.StatusUpdate.VIDEO_CHAT_SCHEDULED |
-        filters.StatusUpdate.VIDEO_CHAT_STARTED |
-        filters.StatusUpdate.VIDEO_CHAT_ENDED |
-        filters.StatusUpdate.VIDEO_CHAT_PARTICIPANTS_INVITED
-    )
-    app.add_handler(MessageHandler(service_message_filters, service_message_handler), group=-1)
+    app.add_handler(MessageHandler(filters.StatusUpdate.ALL, service_message_handler), group=-1)  # Higher priority to delete service messages
 
     # Filters
     app.add_handler(CommandHandler("filter", add_filter))

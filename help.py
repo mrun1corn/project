@@ -52,8 +52,8 @@ HELP_TOPICS = {
         "description": "👥 Manage your Telegram group with these commands (admin only).",
         "category": "main",
         "subcommands": {
-            "welcome": "📩 Usage: `/welcome [message|off]`\nSets a welcome message. The bot will then ask if you want to mention new users.",
-            "goodbye": "👋 Usage: `/goodbye [message|off]`\nSets a goodbye message. The bot will then ask if you want to mention leaving users.",
+            "welcome": "📩 Usage: `/welcome [message|off]`\nSets a welcome message. use {mention} to mention user on joining.",
+            "goodbye": "👋 Usage: `/goodbye [message|off]`\nSets a goodbye message. use {mention} to mention user on left.",
             "filter": "🔍 Usage: `/filter <keyword> <reply>`\nAdd a keyword filter with a custom reply.",
             "stop": "🛑 Usage: `/stop <keyword>`\nRemove a keyword filter.",
             "mute": "🔇 Usage: `/mute`\nMute a user (reply to their message).",
@@ -67,13 +67,14 @@ HELP_TOPICS = {
             "warns": "ℹ️ Usage: `/warns`\nCheck a user's warning count (reply to their message).",
             "warnlimit": "🔢 Usage: `/warnlimit <number>`\nSet the warning limit for the group.",
             "warnmode": "⚙️ Usage: `/warnmode <mute|kick|ban>`\nSet the action for reaching the warning limit.",
-            "lock": "🔒 Usage: `/lock <type|all>`\nLock specific chat features (e.g., gif, sticker, all).",
-            "unlock": "🔓 Usage: `/unlock <type|all>`\nUnlock specific chat features.",
+            "lock": "🔒 Usage: `/lock` or `/lock <type|all> Lock specific chat features. Use without arguments to get interactive buttons.",
+            "unlock": "🔓 Usage: `/unlock` or `/unlock <type|all>` Unlock specific chat features. Use without arguments to get interactive buttons.",
             "pin": "📌 Usage: `/pin [loud]`\nPin a message (reply or with text). Use 'loud' to notify members.",
             "action": "⚙️ Usage: `/action`\nToggle auto-deletion of service messages (join/left).",
-            "call": "📣 Usage: `/call [message]`\nMention all active members in the group.",
+            "tagadmin": "📣 Usage: `/tagadmin [message]` Mention all administrators in the group.",
             "promote": "⬆️ Usage: `/promote [title]`\nPromote a user to admin with a custom title (reply to their message).",
-            "permission": "⚙️ Usage: `/permission <type>`\nGrant a specific permission to an admin (reply to their message).",
+            "permission": "⚙️ Usage: `/permission` Grant a specific permission to an admin. Reply to their message and use without arguments to get interactive buttons.",
+            "revokeperm": "❌ Usage: `/revokeperm` Revoke a specific permission from an admin. Reply to their message and use without arguments to get interactive buttons.",
             "demote": "⬇️ Usage: `/demote`\nDemote an admin (reply to their message)."
         }
     }
