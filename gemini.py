@@ -31,6 +31,10 @@ MAX_MESSAGE_LENGTH = 4096
 PROGRESS_UPDATE_INTERVAL = 1.5
 MAX_HISTORY_TURNS = 10 # Limit conversation history to 10 turns (user + model)
 
+# Termbin settings
+TERMBIN_HOST = "termbin.com"
+TERMBIN_PORT = 9999
+
 # --- Utility Functions ---
 
 def sanitize_response(text: str) -> str:
@@ -53,6 +57,108 @@ async def save_context_async(context: dict):
         await loop.run_in_executor(None, lambda: json.dump(context, open(CONTEXT_FILE, "w"), indent=2))
     except Exception:
         pass
+
+async def upload_to_termbin(text: str) -> str:
+    """Upload text to termbin and return the URL."""
+    try:
+        # Method 1: Try direct socket connection
+        reader, writer = await asyncio.open_connection(TERMBIN_HOST, TERMBIN_PORT)
+        
+        # Send the text
+        writer.write(text.encode('utf-8'))
+        await writer.drain()
+        
+        # Close the writing end to signal completion
+        writer.write_eof()
+        
+        # Read the response (should be the URL)
+        response_data = await asyncio.wait_for(reader.read(1024), timeout=10)
+        
+        # Close the connection
+        writer.close()
+        await writer.wait_closed()
+        
+        # Decode and clean the response
+        url = response_data.decode('utf-8').strip()
+        
+        # Validate the URL format
+        if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+            return url
+        else:
+            raise Exception(f"Invalid termbin response: '{url}'")
+            
+    except Exception as e:
+        # Method 2: Try HTTP POST as fallback
+        try:
+            return await upload_to_termbin_http(text)
+        except Exception as fallback_error:
+            raise Exception(f"Socket method failed: {str(e)}, HTTP method failed: {str(fallback_error)}")
+
+async def upload_to_termbin_http(text: str) -> str:
+    """Alternative HTTP method to upload to termbin."""
+    try:
+        # Some termbin services accept HTTP POST
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"https://{TERMBIN_HOST}",
+                data=text.encode('utf-8'),
+                headers={'Content-Type': 'text/plain'},
+                timeout=10
+            ) as response:
+                if response.status == 200:
+                    url = await response.text()
+                    url = url.strip()
+                    if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+                        return url
+                    else:
+                        raise Exception(f"Invalid HTTP response: '{url}'")
+                else:
+                    raise Exception(f"HTTP request failed with status {response.status}")
+    except Exception as e:
+        # Method 3: Try subprocess as last resort
+        return await upload_to_termbin_subprocess(text)
+
+async def upload_to_termbin_subprocess(text: str) -> str:
+    """Fallback method using subprocess to upload to termbin."""
+    try:
+        import subprocess
+        import tempfile
+        import os
+        
+        # Create a temporary file to avoid shell escaping issues
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as tmp_file:
+            tmp_file.write(text)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # Use cat and nc command as shown in termbin documentation
+            cmd = f"cat {tmp_file_path} | nc termbin.com 9999"
+            
+            # Run the command asynchronously
+            process = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+            
+            if process.returncode == 0:
+                url = stdout.decode('utf-8').strip()
+                if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+                    return url
+                else:
+                    raise Exception(f"Invalid subprocess response: '{url}'")
+            else:
+                raise Exception(f"nc command failed: {stderr.decode('utf-8')}")
+                
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_file_path):
+                os.remove(tmp_file_path)
+            
+    except Exception as e:
+        raise Exception(f"Subprocess upload failed: {str(e)}")
 
 async def get_gemini_response(conversation_history: list, file_data: str = None, file_mime_type: str = None) -> tuple[str, float]:
     start = time.time()
@@ -154,7 +260,7 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     # Load user context
     user_contexts = load_context()
-    user_data = user_contexts.get(user_id, {"history": [], "memory": {}})
+    user_data = user_contexts.get(str(user_id), {"history": [], "memory": {}})
     conversation_history = user_data["history"]
     
     replied_message = message.reply_to_message
@@ -250,20 +356,39 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             file_mime_type=mime_type
         )
         
+        # Prepare the response for display
         escaped_html = html.escape(response_text)
         sanitized_reply = sanitize_response(escaped_html)
-
-        if len(sanitized_reply) > MAX_MESSAGE_LENGTH:
-            sanitized_reply = sanitized_reply[:MAX_MESSAGE_LENGTH - 100] + "...\n\n⚠️ Response was truncated."
         
-        await progress_msg.edit_text(f"{sanitized_reply}\n\n✨ Generated in {elapsed:.1f}s", parse_mode="HTML")
+        # Check if the response (with timing info) will fit in a Telegram message
+        timing_info = f"\n\n✨ Generated in {elapsed:.1f}s"
+        full_message = f"{sanitized_reply}{timing_info}"
+        
+        if len(full_message) > MAX_MESSAGE_LENGTH:
+            # Response is too long for Telegram, upload to termbin
+            try:
+                await progress_msg.edit_text(f"📤 Response is long ({len(response_text)} chars), uploading to termbin...")
+                termbin_url = await upload_to_termbin(response_text)
+                
+                # Send ONLY the termbin link (no preview text)
+                final_message = f"📋 <b>Full response:</b> {termbin_url}{timing_info}"
+                
+                await progress_msg.edit_text(final_message, parse_mode="HTML")
+                
+            except Exception as e:
+                # Fall back to truncation if termbin fails
+                truncated_reply = sanitized_reply[:MAX_MESSAGE_LENGTH - 200] + f"...\n\n⚠️ Response was truncated (termbin upload failed: {str(e)})"
+                await progress_msg.edit_text(f"{truncated_reply}{timing_info}", parse_mode="HTML")
+        else:
+            # Response fits in Telegram message, show it normally
+            await progress_msg.edit_text(full_message, parse_mode="HTML")
         
         # Add model's response to history
         conversation_history.append({"role": "model", "parts": [{"text": response_text}]})
         
         # Save updated context
         user_data["history"] = conversation_history
-        user_contexts[user_id] = user_data
+        user_contexts[str(user_id)] = user_data
         asyncio.create_task(save_context_async(user_contexts))
         
     finally:
@@ -275,10 +400,3 @@ def register_gemini_handlers(application):
     """Registers the /ai command handler with the Telegram Bot Application."""
     application.add_handler(CommandHandler("ai", ai_command))
 
-# --- Example of how to run your bot (if this is your main script) ---
-# if __name__ == "__main__":
-#     application = Application.builder().token(BOT_TOKEN).build()
-
-#     register_gemini_handlers(application)
-
-#     application.run_polling(allowed_updates=Update.ALL_TYPES)

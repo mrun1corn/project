@@ -1,1 +1,14 @@
-{"welcome": null, "goodbye": null, "filters": {}, "warn_counts": {}, "warn_limit": 3, "warn_mode": "mute", "slowmode": 10}
+{
+    "welcome": null,
+    "goodbye": null,
+    "filters": {},
+    "warn_counts": {},
+    "warn_limit": 3,
+    "warn_mode": "mute",
+    "slowmode": 10,
+    "members": {
+        "5290232224": "FLAMMAx9",
+        "6181453234": "Tillua467",
+        "6955844684": "suhaib_sadad"
+    }
+}

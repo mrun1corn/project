@@ -1,1 +1,15 @@
-{"welcome": null, "goodbye": null, "filters": {}, "warn_counts": {}, "warn_limit": 3, "warn_mode": "mute", "slowmode": 10, "locks": {"photo": true}}
+{
+    "welcome": null,
+    "goodbye": "hi {mention}",
+    "filters": {},
+    "warn_counts": {},
+    "warn_limit": 3,
+    "warn_mode": "mute",
+    "slowmode": 10,
+    "locks": {
+        "photo": true
+    },
+    "members": {
+        "8038776684": "Botuser321"
+    }
+}
