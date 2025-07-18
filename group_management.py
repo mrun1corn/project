@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from functools import wraps
+from group_management_commands import group_management_command_enabled_check, group_manage_command, group_manage_callback
 
 # --- Constants ---
 ADMIN_ONLY_MSG = "❌ You must be an admin to use this command."
@@ -172,6 +173,7 @@ def parse_time(time_str: str) -> int:
 # --------------------- Core Features ---------------------
 
 @admin_only
+@group_management_command_enabled_check("welcome")
 @error_handler
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -193,6 +195,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
+@group_management_command_enabled_check("goodbye")
 @error_handler
 async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -290,6 +293,7 @@ async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await update.effective_message.delete()
 
 @admin_only
+@group_management_command_enabled_check("filter")
 @error_handler
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -304,6 +308,7 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Filter added for '{trigger}'")
 
 @admin_only
+@group_management_command_enabled_check("stop")
 @error_handler
 async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -408,6 +413,7 @@ async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --------------------- Moderation ---------------------
 
 @admin_only
+@group_management_command_enabled_check("mute")
 @error_handler
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -429,6 +435,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔇 User muted.")
 
 @admin_only
+@group_management_command_enabled_check("tmute")
 @error_handler
 async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -458,6 +465,7 @@ async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔇 User muted for {duration_str}.")
 
 @admin_only
+@group_management_command_enabled_check("unmute")
 @error_handler
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -472,6 +480,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔊 User unmuted.")
 
 @admin_only
+@group_management_command_enabled_check("kick")
 @error_handler
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -490,6 +499,7 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👢 User kicked.")
 
 @admin_only
+@group_management_command_enabled_check("ban")
 @error_handler
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -507,6 +517,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚫 User banned.")
 
 @admin_only
+@group_management_command_enabled_check("tban")
 @error_handler
 async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -531,6 +542,7 @@ async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚫 User banned for {duration_str}.")
 
 @admin_only
+@group_management_command_enabled_check("unban")
 @error_handler
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -543,6 +555,7 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --------------------- Warning System ---------------------
 
 @admin_only
+@group_management_command_enabled_check("warn")
 @error_handler
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -585,6 +598,7 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_group(chat_id, group)
 
 @admin_only
+@group_management_command_enabled_check("warns")
 @error_handler
 async def warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -599,6 +613,7 @@ async def warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"User {target_user.mention_markdown_v2()} has {count} warnings.", parse_mode="MarkdownV2")
 
 @admin_only
+@group_management_command_enabled_check("warnlimit")
 @error_handler
 async def set_warn_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or not context.args[0].isdigit():
@@ -611,6 +626,7 @@ async def set_warn_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Warning limit set to {context.args[0]}.")
 
 @admin_only
+@group_management_command_enabled_check("warnmode")
 @error_handler
 async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or context.args[0].lower() not in ['mute', 'kick', 'ban']:
@@ -651,6 +667,7 @@ def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 @admin_only
+@group_management_command_enabled_check("locks")
 @bot_has_permissions(["can_change_info"])
 @error_handler
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -731,6 +748,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(text="✅ Settings updated and applied!")
 
 @admin_only
+@group_management_command_enabled_check("pin")
 @bot_has_permissions(["can_pin_messages"])
 @error_handler
 async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -758,6 +776,7 @@ async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 @admin_only
+@group_management_command_enabled_check("action")
 @error_handler
 async def action_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -833,6 +852,7 @@ async def get_bot_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
     return ChatAdministratorRights() # Return empty rights if not admin or error
 
 @admin_only
+@group_management_command_enabled_check("promote")
 @bot_has_permissions(["can_promote_members"])
 @error_handler
 async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -874,6 +894,7 @@ def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) 
     return InlineKeyboardMarkup(keyboard)
 
 @admin_only
+@group_management_command_enabled_check("permissions")
 @bot_has_permissions(["can_promote_members"])
 @error_handler
 async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -953,6 +974,7 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(f"✅ {perm_key.capitalize()} permission updated.")
 
 @admin_only
+@group_management_command_enabled_check("demote")
 @bot_has_permissions(["can_promote_members"])
 @error_handler
 async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -993,6 +1015,7 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Member list persistence will need a separate, less frequent mechanism if desired.
 
 @admin_only
+@group_management_command_enabled_check("tagadmin")
 @error_handler
 async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -1060,3 +1083,7 @@ def register_group_management(app):
     # Utility
     app.add_handler(CommandHandler("tagadmin", tagadmin))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, update_member_list), group=1) # Lower priority
+
+    # Group Management Commands
+    app.add_handler(CommandHandler("group_manage", group_manage_command))
+    app.add_handler(CallbackQueryHandler(group_manage_callback, pattern="^group_manage_"))

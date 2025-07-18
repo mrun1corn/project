@@ -1,0 +1,26 @@
+{
+    "group_management_commands": {
+        "welcome": true,
+        "goodbye": true,
+        "filter": true,
+        "stop": true,
+        "mute": true,
+        "tmute": true,
+        "unmute": true,
+        "kick": true,
+        "ban": true,
+        "tban": true,
+        "unban": true,
+        "warn": true,
+        "warns": true,
+        "warnlimit": true,
+        "warnmode": true,
+        "locks": true,
+        "pin": true,
+        "action": true,
+        "promote": true,
+        "demote": true,
+        "permissions": true,
+        "tagadmin": true
+    }
+}
