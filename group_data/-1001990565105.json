@@ -1,12 +1,15 @@
 {
     "welcome": null,
     "goodbye": null,
+    "welcome_mention": true,
+    "goodbye_mention": true,
     "filters": {},
     "warn_counts": {},
     "warn_limit": 3,
     "warn_mode": "mute",
-    "slowmode": 10,
+    "locks": {},
+    "action_delete": true,
     "members": {
-        "1278600516": "sa_sajjadx"
+        "7161435148": "mohamed"
     }
 }
