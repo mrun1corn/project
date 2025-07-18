@@ -20,7 +20,11 @@ NO_ADMIN_WARN_MSG = "⚠️ Warn an admin? They probably wrote the rules."
 INVALID_TIME_FORMAT_MSG = "Invalid time format. Use 'm', 'h', or 'd'. E.g., /tmute 30m"
 BOT_NO_RESTRICT_PERMISSION_MSG = "❌ I don't have permission to restrict members. Grant me 'Restrict members' right."
 BOT_NO_DELETE_PERMISSION_MSG = "❌ I don't have permission to delete messages. Grant me 'Delete messages' right."
-BOT_NO_PROMOTE_PERMISSION_MSG = "❌ I don't have permission to demote members. Grant me 'Promote Members' right."
+BOT_NO_PROMOTE_PERMISSION_MSG = "❌ I don't have permission to promote members. Grant me 'Promote Members' right."
+BOT_NO_CHANGE_INFO_PERMISSION_MSG = "❌ I don't have permission to change chat info. Grant me 'Change Info' right."
+BOT_NO_INVITE_USERS_PERMISSION_MSG = "❌ I don't have permission to invite users. Grant me 'Invite Users' right."
+BOT_NO_PIN_MESSAGES_PERMISSION_MSG = "❌ I don't have permission to pin messages. Grant me 'Pin Messages' right."
+BOT_NO_MANAGE_TOPICS_PERMISSION_MSG = "❌ I don't have permission to manage topics. Grant me 'Manage Topics' right."
 USAGE_FILTER_MSG = "Usage: /filter <keyword> <reply>"
 USAGE_STOP_MSG = "Usage: /stop <keyword>"
 USAGE_UNBAN_MSG = "Usage: /unban <user_id>"
@@ -44,6 +48,28 @@ def error_handler(func):
             elif update.callback_query:
                 await update.callback_query.answer(f"❌ An unexpected error occurred: {e}", show_alert=True)
     return wrapped
+
+def bot_has_permissions(permissions: list[str]):
+    def decorator(func):
+        @wraps(func)
+        async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            chat_id = update.effective_chat.id
+            bot_rights = await get_bot_admin_rights(context, chat_id)
+            missing_permissions = []
+            for perm in permissions:
+                if not getattr(bot_rights, perm, False):
+                    missing_permissions.append(perm.replace("can_", "").replace("_", " ").capitalize())
+            
+            if missing_permissions:
+                msg = f"❌ I need the following permissions to perform this action: {', '.join(missing_permissions)}."
+                if update.message:
+                    await update.message.reply_text(msg)
+                elif update.callback_query:
+                    await update.callback_query.answer(msg, show_alert=True)
+                return
+            return await func(update, context, *args, **kwargs)
+        return wrapped
+    return decorator
 
 GROUP_DATA_DIR = 'group_data'
 os.makedirs(GROUP_DATA_DIR, exist_ok=True)
@@ -292,18 +318,6 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Filter '{trigger}' removed")
     else:
         await update.message.reply_text("❌ Filter not found.")
-
-def _check_entities(update: Update, entity_type: str) -> bool:
-    """Helper to check for entities in a message or its caption."""
-    if update.message.entities:
-        for entity in update.message.entities:
-            if entity.type == entity_type:
-                return True
-    if update.message.caption_entities:
-        for entity in update.message.caption_entities:
-            if entity.type == entity_type:
-                return True
-    return False
 
 def _check_entities(update: Update, entity_type: str) -> bool:
     """Helper to check for entities in a message or its caption."""
@@ -632,6 +646,7 @@ def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 @admin_only
+@bot_has_permissions(["can_change_info"])
 @error_handler
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -641,6 +656,7 @@ async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = _build_locks_keyboard(locks)
     await update.message.reply_text("🔧 Manage group locks:", reply_markup=reply_markup)
 
+@bot_has_permissions(["can_restrict_members", "can_delete_messages"])
 @error_handler
 async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -648,14 +664,6 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat.id
     if not await is_user_admin(context, chat_id, query.from_user.id):
         await query.answer(text=ADMIN_PERMISSION_MSG, show_alert=True)
-        return
-
-    bot_rights = await get_bot_admin_rights(context, chat_id)
-    if not bot_rights.can_restrict_members:
-        await query.answer(text=BOT_NO_RESTRICT_PERMISSION_MSG, show_alert=True)
-        return
-    if not bot_rights.can_delete_messages:
-        await query.answer(text=BOT_NO_DELETE_PERMISSION_MSG, show_alert=True)
         return
 
     group = load_group(chat_id)
@@ -718,6 +726,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(text="✅ Settings updated and applied!")
 
 @admin_only
+@bot_has_permissions(["can_pin_messages"])
 @error_handler
 async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     notify = 'loud' in context.args
@@ -819,6 +828,7 @@ async def get_bot_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
     return ChatAdministratorRights() # Return empty rights if not admin or error
 
 @admin_only
+@bot_has_permissions(["can_promote_members"])
 @error_handler
 async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -854,6 +864,7 @@ def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) 
     return InlineKeyboardMarkup(keyboard)
 
 @admin_only
+@bot_has_permissions(["can_promote_members"])
 @error_handler
 async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -878,6 +889,7 @@ async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+@bot_has_permissions(["can_promote_members"])
 @error_handler
 async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -931,6 +943,7 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(f"✅ {perm_key.capitalize()} permission updated.")
 
 @admin_only
+@bot_has_permissions(["can_promote_members"])
 @error_handler
 async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -944,28 +957,12 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(USER_NOT_ADMIN_PROMOTE_FIRST_MSG)
         return
 
-    bot_rights = await get_bot_admin_rights(context, chat_id)
-    if not bot_rights.can_promote_members:
-        await update.message.reply_text(BOT_NO_PROMOTE_PERMISSION_MSG)
-        return
-
     # Demote by setting all admin rights to False
+    demote_rights = {attr: False for attr in MINIMAL_ADMIN_RIGHTS.to_dict().keys()}
     await context.bot.promote_chat_member(
         chat_id=chat_id,
         user_id=target_user_id,
-        can_manage_chat=False,
-        can_delete_messages=False,
-        can_manage_video_chats=False,
-        can_restrict_members=False,
-        can_promote_members=False,
-        can_change_info=False,
-        can_invite_users=False,
-        can_pin_messages=False,
-        is_anonymous=False,
-        can_manage_topics=False,
-        can_post_stories=False,
-        can_edit_stories=False,
-        can_delete_stories=False,
+        **demote_rights
     )
     await update.message.reply_text("✅ User demoted.")
 
