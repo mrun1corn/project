@@ -1,0 +1,8 @@
+{
+    "notes_commands": {
+        "keep": true,
+        "notes": true,
+        "delete": true,
+        "getnote": true
+    }
+}
