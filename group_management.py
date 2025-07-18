@@ -279,9 +279,24 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = load_group(chat_id)
     locks = group.get("locks", {})
 
-    # Check for all lockable types
     should_delete = False
-    if locks.get("text") and update.message.text:
+
+    # Helper to check for entities
+    def _check_entities(entity_type):
+        if update.message.entities:
+            for entity in update.message.entities:
+                if entity.type == entity_type:
+                    return True
+        if update.message.caption_entities:
+            for entity in update.message.caption_entities:
+                if entity.type == entity_type:
+                    return True
+        return False
+
+    # Check for all lockable types
+    if locks.get("all"):
+        should_delete = True
+    elif locks.get("text") and update.message.text:
         should_delete = True
     elif locks.get("photo") and update.message.photo:
         should_delete = True
@@ -297,9 +312,49 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         should_delete = True
     elif locks.get("sticker") and update.message.sticker:
         should_delete = True
-    elif locks.get("emoji") and update.message.entities and any(e.type == 'custom_emoji' for e in update.message.entities):
+    elif locks.get("emoji") and _check_entities("custom_emoji"):
         should_delete = True
     elif locks.get("video_note") and update.message.video_note:
+        should_delete = True
+    elif locks.get("album") and update.message.media_group_id:
+        should_delete = True
+    elif locks.get("contact") and update.message.contact:
+        should_delete = True
+    elif locks.get("location") and update.message.location:
+        should_delete = True
+    elif locks.get("poll") and update.message.poll:
+        should_delete = True
+    elif locks.get("game") and update.message.game:
+        should_delete = True
+    elif locks.get("inline") and update.message.via_bot:
+        should_delete = True
+    elif locks.get("forward") and update.message.forward_date:
+        should_delete = True
+    elif locks.get("forwardbot") and update.message.forward_from and update.message.forward_from.is_bot:
+        should_delete = True
+    elif locks.get("forwardchannel") and update.message.forward_from_chat and update.message.forward_from_chat.type == "channel":
+        should_delete = True
+    elif locks.get("forwarduser") and update.message.forward_from and not update.message.forward_from.is_bot:
+        should_delete = True
+    elif locks.get("url") and _check_entities("url"):
+        should_delete = True
+    elif locks.get("email") and _check_entities("email"):
+        should_delete = True
+    elif locks.get("cashtag") and _check_entities("cashtag"):
+        should_delete = True
+    elif locks.get("command") and _check_entities("bot_command"):
+        should_delete = True
+    elif locks.get("phone") and _check_entities("phone_number"):
+        should_delete = True
+    elif locks.get("spoiler") and _check_entities("spoiler"):
+        should_delete = True
+    elif locks.get("anonchannel") and update.message.sender_chat and update.message.sender_chat.type == "channel" and update.message.sender_chat.is_anonymous:
+        should_delete = True
+    elif locks.get("botlink") and _check_entities("text_link") and "t.me/" in (update.message.text or update.message.caption or ""):
+        # This is a very basic check and might need refinement
+        should_delete = True
+    elif locks.get("invitelink") and _check_entities("text_link") and ("t.me/joinchat/" in (update.message.text or update.message.caption or "") or "t.me/+" in (update.message.text or update.message.caption or "")):
+        # This is a very basic check and might need refinement
         should_delete = True
 
     if should_delete:
@@ -569,7 +624,13 @@ async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------- Group Settings ---------------------
 
-LOCKABLE_TYPES = ["gif", "sticker", "photo", "video", "audio", "voice", "document", "text", "emoji", "video_note"]
+LOCKABLE_TYPES = [
+    "album", "anonchannel", "audio", "bot", "cashtag", "command", "contact", 
+    "document", "email", "emoji", "emojicustom", "emojigame", "externalreply", "forward", 
+    "forwardbot", "forwardchannel", "forwarduser", "game", "gif", "inline", 
+    "location", "phone", "photo", "poll", "spoiler", "sticker", "stickeranimated", 
+    "stickerpremium", "text", "url", "video", "videonote", "voice"
+]
 
 @admin_only
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -649,6 +710,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "can_manage_topics": True,
         }
 
+
         # Apply lock logic to the new dictionary
         permissions_data["can_send_messages"] = not locks.get("text", False)
         permissions_data["can_send_photos"] = not locks.get("photo", False)
@@ -657,7 +719,9 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         permissions_data["can_send_voice_notes"] = not locks.get("voice", False)
         permissions_data["can_send_documents"] = not locks.get("document", False)
         permissions_data["can_send_video_notes"] = not locks.get("video_note", False)
+        permissions_data["can_send_polls"] = not locks.get("poll", False)
         permissions_data["can_send_other_messages"] = not (locks.get("emoji", False) or locks.get("sticker", False) or locks.get("gif", False))
+        permissions_data["can_add_web_page_previews"] = not locks.get("previews", False)
 
         permissions = ChatPermissions(**permissions_data)
 
@@ -886,6 +950,11 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Toggle the specific permission
         updated_rights_dict[permission_name] = not updated_rights_dict.get(permission_name, False)
+
+        # Only grant rights that the bot itself has
+        for right, value in updated_rights_dict.items():
+            if value and not getattr(bot_rights, right, False):
+                updated_rights_dict[right] = False # Bot cannot grant what it doesn't have
         
         new_rights = ChatAdministratorRights(**updated_rights_dict)
 

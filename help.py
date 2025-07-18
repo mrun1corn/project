@@ -67,7 +67,7 @@ HELP_TOPICS = {
             "warns": "ℹ️ Usage: `/warns`\nCheck a user's warning count (reply to their message).",
             "warnlimit": "🔢 Usage: `/warnlimit <number>`\nSet the warning limit for the group.",
             "warnmode": "⚙️ Usage: `/warnmode <mute|kick|ban>`\nSet the action for reaching the warning limit.",
-            "locks": "🔒 Usage: `/locks` Manage chat features locks with an interactive menu.",
+            "locks": "🔒 Usage: `/locks` Manage chat features locks with an interactive menu.\n\nAvailable locks include: all, text, photo, video, audio, voice, document, gif, sticker, emoji, video_note, album, anonchannel, bot, cashtag, command, contact, email, emojicustom, emojigame, externalreply, forward, forwardbot, forwardchannel, forwarduser, game, inline, location, phone, poll, spoiler, stickeranimated, stickerpremium, url, previews."}
             "pin": "📌 Usage: `/pin [loud]` Pin a message (reply or with text). Use 'loud' to notify members.",
             "action": "⚙️ Usage: `/action`\nToggle auto-deletion of service messages (join/left).",
             "tagadmin": "📣 Usage: `/tagadmin [message]` Mention all administrators in the group.",
