@@ -195,13 +195,21 @@ async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=msg)
 
 async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import asyncio
     chat_id = update.effective_chat.id
     group = load_group(chat_id)
     if group.get('action_delete', True) and update.effective_message:
         try:
+            # Add a small delay to avoid race conditions
+            await asyncio.sleep(0.5)
             await update.effective_message.delete()
         except Exception:
-            pass # Ignore if bot can't delete
+            # Retry once after a short delay
+            try:
+                await asyncio.sleep(0.5)
+                await update.effective_message.delete()
+            except Exception:
+                pass # Ignore if bot can't delete
 
 @admin_only
 async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,6 +341,9 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user to warn them.")
+        return
     chat_id = update.effective_chat.id
     target_user = update.message.reply_to_message.from_user
     group = load_group(chat_id)
@@ -621,23 +632,22 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_group(chat_id, group)
 
 @admin_only
-async def call_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
-    members = group.get('members', {})
-    
-    if not members:
-        await update.message.reply_text("No active members recorded yet. Let people chat first.")
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to fetch admins: {e}")
         return
 
-    mention_text = " ".join(f"@{username}" for username in members.values() if username)
+    mention_text = " ".join(f"@{admin.user.username}" for admin in admins if admin.user.username)
     reason = " ".join(context.args)
-    
+
     if not mention_text:
-        await update.message.reply_text("No members with usernames found to mention.")
+        await update.message.reply_text("No admins with usernames found to mention.")
         return
 
-    message = f"📣 **Calling all members!**\n{reason}\n\n{mention_text}"
+    message = f"📣 **Calling all admins!**\n{reason}\n\n{mention_text}"
     await update.message.reply_text(message, parse_mode="Markdown")
 
 
@@ -687,5 +697,5 @@ def register_group_management(app):
     app.add_handler(CommandHandler("permission", permission))
 
     # Utility
-    app.add_handler(CommandHandler("call", call_all))
+    app.add_handler(CommandHandler("tagadmin", tagadmin))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, update_member_list), group=1) # Lower priority

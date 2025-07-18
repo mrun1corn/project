@@ -67,7 +67,7 @@ HELP_TOPICS = {
             "warns": "ℹ️ Usage: `/warns`\nCheck a user's warning count (reply to their message).",
             "warnlimit": "🔢 Usage: `/warnlimit <number>`\nSet the warning limit for the group.",
             "warnmode": "⚙️ Usage: `/warnmode <mute|kick|ban>`\nSet the action for reaching the warning limit.",
-            "lock": "🔒 Usage: `/lock` or `/lock <type|all> Lock specific chat features. Use without arguments to get interactive buttons.",
+            "lock": "🔒 Usage: `/lock` or `/lock <type|all>` Lock specific chat features. Use without arguments to get interactive buttons.",
             "unlock": "🔓 Usage: `/unlock` or `/unlock <type|all>` Unlock specific chat features. Use without arguments to get interactive buttons.",
             "pin": "📌 Usage: `/pin [loud]`\nPin a message (reply or with text). Use 'loud' to notify members.",
             "action": "⚙️ Usage: `/action`\nToggle auto-deletion of service messages (join/left).",
@@ -97,7 +97,7 @@ async def help_command(update: Update, context: ContextTypes):
     if update.effective_chat.type != "private":
         bot_username = (await context.bot.get_me()).username
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📬 Get Help in Private", url=f"https://t.me/{bot_username}?start=help")]
+            [InlineKeyboardButton("📬 Get Help in Private", url=f"https://t.me/{bot_username}?start=help&start=help")]
         ])
         await update.message.reply_text(
             "Click below to view the help menu in a private chat 👇",
