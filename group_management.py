@@ -279,9 +279,30 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = load_group(chat_id)
     locks = group.get("locks", {})
 
-    # Only check for text and emoji, as other locks are handled by permissions
-    if (locks.get("text") and update.message.text) or \
-       (locks.get("emoji") and update.message.entities and any(e.type == 'custom_emoji' for e in update.message.entities)):
+    # Check for all lockable types
+    should_delete = False
+    if locks.get("text") and update.message.text:
+        should_delete = True
+    elif locks.get("photo") and update.message.photo:
+        should_delete = True
+    elif locks.get("video") and update.message.video:
+        should_delete = True
+    elif locks.get("audio") and update.message.audio:
+        should_delete = True
+    elif locks.get("voice") and update.message.voice:
+        should_delete = True
+    elif locks.get("document") and update.message.document:
+        should_delete = True
+    elif locks.get("gif") and update.message.animation:
+        should_delete = True
+    elif locks.get("sticker") and update.message.sticker:
+        should_delete = True
+    elif locks.get("emoji") and update.message.entities and any(e.type == 'custom_emoji' for e in update.message.entities):
+        should_delete = True
+    elif locks.get("video_note") and update.message.video_note:
+        should_delete = True
+
+    if should_delete:
         try:
             await update.message.delete()
         except Exception as e:
@@ -370,7 +391,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.restrict_chat_member(
             update.effective_chat.id,
             user_id,
-            permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True)
+            permissions=ChatPermissions(can_send_messages=True, can_send_photos=True, can_send_videos=True, can_send_audios=True, can_send_voice_notes=True, can_send_documents=True, can_send_video_notes=True, can_send_other_messages=True, can_add_web_page_previews=True)
         )
         await update.message.reply_text("🔊 User unmuted.")
     except Exception as e:
@@ -548,7 +569,7 @@ async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------- Group Settings ---------------------
 
-LOCKABLE_TYPES = ["gif", "sticker", "photo", "video", "audio", "voice", "document", "text", "emoji"]
+LOCKABLE_TYPES = ["gif", "sticker", "photo", "video", "audio", "voice", "document", "text", "emoji", "video_note"]
 
 @admin_only
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -581,6 +602,14 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(text="❌ You must be an admin to change this setting.", show_alert=True)
             return
 
+        bot_rights = await get_bot_admin_rights(context, chat_id)
+        if not bot_rights.can_restrict_members:
+            await query.answer(text="❌ I don't have permission to restrict members. Grant me 'Restrict members' right.", show_alert=True)
+            return
+        if not bot_rights.can_delete_messages:
+            await query.answer(text="❌ I don't have permission to delete messages. Grant me 'Delete messages' right.", show_alert=True)
+            return
+
         group = load_group(chat_id)
         locks = group.setdefault("locks", {})
         original_locks = locks.copy()
@@ -602,19 +631,37 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_group(chat_id, group)
 
         # Apply permissions to the chat
-        permissions = ChatPermissions(
-            can_send_messages=not locks.get("text"),
-            can_send_photos=not locks.get("photo"),
-            can_send_videos=not locks.get("video"),
-            can_send_audios=not locks.get("audio"),
-            can_send_voice_notes=not locks.get("voice"),
-            can_send_documents=not locks.get("document"),
-            can_send_stickers=not locks.get("sticker"),
-            can_send_animations=not locks.get("gif"),
-            can_send_other_messages=not locks.get("emoji"), # This is a bit of a catch-all
-        )
-        await context.bot.set_chat_permissions(chat_id, permissions)
+        # Create a new dictionary with all valid ChatPermissions arguments, defaulting to True
+        permissions_data = {
+            "can_send_messages": True,
+            "can_send_photos": True,
+            "can_send_videos": True,
+            "can_send_audios": True,
+            "can_send_voice_notes": True,
+            "can_send_documents": True,
+            "can_send_video_notes": True,
+            "can_send_polls": True,
+            "can_send_other_messages": True,
+            "can_add_web_page_previews": True,
+            "can_change_info": True,
+            "can_invite_users": True,
+            "can_pin_messages": True,
+            "can_manage_topics": True,
+        }
 
+        # Apply lock logic to the new dictionary
+        permissions_data["can_send_messages"] = not locks.get("text", False)
+        permissions_data["can_send_photos"] = not locks.get("photo", False)
+        permissions_data["can_send_videos"] = not locks.get("video", False)
+        permissions_data["can_send_audios"] = not locks.get("audio", False)
+        permissions_data["can_send_voice_notes"] = not locks.get("voice", False)
+        permissions_data["can_send_documents"] = not locks.get("document", False)
+        permissions_data["can_send_video_notes"] = not locks.get("video_note", False)
+        permissions_data["can_send_other_messages"] = not (locks.get("emoji", False) or locks.get("sticker", False) or locks.get("gif", False))
+
+        permissions = ChatPermissions(**permissions_data)
+
+        # Rebuild the keyboard with updated status
         keyboard = []
         for l_type in LOCKABLE_TYPES:
             status_icon = "🔒" if locks.get(l_type) else "🔓"
@@ -629,6 +676,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔧 Manage group locks:", reply_markup=reply_markup)
         await query.answer(text="✅ Settings updated and applied!")
     except Exception as e:
+        print(f"Error in locks_callback: {e}") # Added for debugging
         await query.answer(f"❌ An unexpected error occurred: {e}", show_alert=True)
 
 @admin_only
@@ -722,13 +770,31 @@ async def get_bot_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
     try:
         bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
         if bot_member.status == 'administrator':
-            return bot_member.rights
+            return ChatAdministratorRights(
+                can_manage_chat=bot_member.can_manage_chat,
+                can_delete_messages=bot_member.can_delete_messages,
+                can_manage_video_chats=bot_member.can_manage_video_chats,
+                can_restrict_members=bot_member.can_restrict_members,
+                can_promote_members=bot_member.can_promote_members,
+                can_change_info=bot_member.can_change_info,
+                can_invite_users=bot_member.can_invite_users,
+                can_pin_messages=bot_member.can_pin_messages,
+                is_anonymous=bot_member.is_anonymous,
+                can_manage_topics=bot_member.can_manage_topics,
+                can_post_stories=bot_member.can_post_stories,
+                can_edit_stories=bot_member.can_edit_stories,
+                can_delete_stories=bot_member.can_delete_stories,
+            )
     except Exception as e:
         print(f"Error getting bot admin rights for chat {chat_id}: {e}")
     return ChatAdministratorRights() # Return empty rights if not admin or error
 
 @admin_only
 async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to promote them.")
+        return
+
     user_id = update.message.reply_to_message.from_user.id
     chat_id = update.effective_chat.id
     custom_title = " ".join(context.args) if context.args else "Admin"
@@ -853,23 +919,38 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     target_user_id = update.message.reply_to_message.from_user.id
 
-    if await is_user_admin(context, chat_id, target_user_id):
-        await update.message.reply_text("😂 Demote an admin? Bold move. It won't work.")
-        return
-        
     try:
-        # Create a rights object with all False values
-        demote_rights = ChatAdministratorRights(
-            can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
-            can_restrict_members=False, can_promote_members=False, can_change_info=False,
-            can_invite_users=False, can_pin_messages=False, is_anonymous=False,
-            can_manage_topics=False, can_post_stories=False, can_edit_stories=False,
+        if not await is_user_admin(context, chat_id, target_user_id):
+            await update.message.reply_text("❌ User is not an admin.")
+            return
+
+        bot_rights = await get_bot_admin_rights(context, chat_id)
+        if not bot_rights.can_promote_members:
+            await update.message.reply_text("❌ I don't have permission to demote members. Grant me 'Promote Members' right.")
+            return
+
+        # Demote by setting all admin rights to False
+        await context.bot.promote_chat_member(
+            chat_id=chat_id,
+            user_id=target_user_id,
+            can_manage_chat=False,
+            can_delete_messages=False,
+            can_manage_video_chats=False,
+            can_restrict_members=False,
+            can_promote_members=False,
+            can_change_info=False,
+            can_invite_users=False,
+            can_pin_messages=False,
+            is_anonymous=False,
+            can_manage_topics=False,
+            can_post_stories=False,
+            can_edit_stories=False,
             can_delete_stories=False,
         )
-        await context.bot.promote_chat_member(chat_id, target_user_id, **demote_rights.to_dict())
-        await update.message.reply_text("⬇️ User demoted.")
+        await update.message.reply_text("✅ User demoted.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed to demote: {e}")
+        await update.message.reply_text(f"❌ Failed to demote user: {e}")
+
 
 # --------------------- Utility ---------------------
 
