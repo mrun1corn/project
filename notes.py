@@ -2,9 +2,12 @@ import os
 import json
 import fcntl  # For file locking on Unix-like systems
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
+from functools import wraps
+from group_management import error_handler, admin_only, is_user_admin # Import is_user_admin
+from notes_commands import notes_command_enabled_check, notes_manage_command, notes_manage_callback
 
 NOTES_DIR = "notes"
 os.makedirs(NOTES_DIR, exist_ok=True)
@@ -38,12 +41,10 @@ def save_notes(chat, notes):
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         return True
-    try:
-        member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
-        return member.status in ["administrator", "creator"]
-    except TelegramError:
-        return False
+    return await is_user_admin(context, update.effective_chat.id, update.effective_user.id)
 
+@error_handler
+@notes_command_enabled_check("keep")
 async def keep_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private" and context.args and context.args[0].lower() == "private":
         await update.message.reply_text(
@@ -91,6 +92,8 @@ async def keep_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Please provide both note text and notename")
 
+@error_handler
+@notes_command_enabled_check("notes")
 async def show_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     notes = load_notes(update.effective_chat)
     user_id = str(update.effective_user.id)
@@ -108,6 +111,8 @@ async def show_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
+@error_handler
+@notes_command_enabled_check("getnote")
 async def get_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text.startswith("#"):
@@ -134,6 +139,9 @@ async def get_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"Note *{name}* not found", parse_mode=ParseMode.MARKDOWN)
 
+@admin_only
+@error_handler
+@notes_command_enabled_check("delete")
 async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /delete notename\nExample: /delete meeting_time", parse_mode=ParseMode.MARKDOWN)
@@ -168,4 +176,6 @@ def register_note_handlers(app: Application):
     app.add_handler(CommandHandler("keep", keep_note))
     app.add_handler(CommandHandler("notes", show_notes))
     app.add_handler(CommandHandler("delete", delete_note))
-    app.add_handler(MessageHandler(filters.Regex(r'^#.+$'), get_note))
+    app.add_handler(MessageHandler(filters.Regex(r'^#.+'), get_note))
+    app.add_handler(CommandHandler("notes_manage", notes_manage_command))
+    app.add_handler(CallbackQueryHandler(notes_manage_callback, pattern="^notes_manage_"))
