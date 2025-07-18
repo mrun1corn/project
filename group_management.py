@@ -48,10 +48,15 @@ def error_handler(func):
 GROUP_DATA_DIR = 'group_data'
 os.makedirs(GROUP_DATA_DIR, exist_ok=True)
 
+_group_cache = {}
+
 def _group_file(chat_id):
     return os.path.join(GROUP_DATA_DIR, f"{chat_id}.json")
 
 def load_group(chat_id):
+    if chat_id in _group_cache:
+        return _group_cache[chat_id]
+
     path = _group_file(chat_id)
     group_data = {
         'welcome': None,
@@ -73,20 +78,32 @@ def load_group(chat_id):
                 group_data.update(loaded_data) # Update default data with loaded data
     except (IOError, json.JSONDecodeError) as e:
         print(f"Error loading group data for chat {chat_id}: {e}")
+    
+    _group_cache[chat_id] = group_data
     return group_data
 
 def save_group(chat_id, data):
+    _group_cache[chat_id] = data # Update cache
     try:
         with open(_group_file(chat_id), 'w') as f:
             json.dump(data, f, indent=4)
     except IOError as e:
         pass
 
+_admin_cache = {}
+_ADMIN_CACHE_TIMEOUT = 60 # seconds
+
 async def is_user_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
     """Checks if a user is an administrator in the chat."""
+    cache_key = (chat_id, user_id)
+    if cache_key in _admin_cache and time.time() - _admin_cache[cache_key][1] < _ADMIN_CACHE_TIMEOUT:
+        return _admin_cache[cache_key][0]
+
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
-        return member.status in ['administrator', 'creator']
+        is_admin = member.status in ['administrator', 'creator']
+        _admin_cache[cache_key] = (is_admin, time.time())
+        return is_admin
     except Exception as e:
         print(f"Error checking admin status for chat {chat_id}, user {user_id}: {e}")
         return False
@@ -191,6 +208,16 @@ async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(f"✅ User mentions for {type} message have been {'enabled' if mention_enabled else 'disabled'}.")
 
+def _format_member_message(msg: str, member, chat_title: str) -> str:
+    """Formats a message with member and chat details."""
+    return msg.format(
+        first=escape_markdown(member.first_name or "", version=2),
+        fullname=escape_markdown(member.full_name, version=2),
+        username=escape_markdown(f"@{member.username}" if member.username else "", version=2),
+        mention=member.mention_markdown_v2(),
+        chatname=escape_markdown(chat_title or "", version=2)
+    )
+
 @error_handler
 async def member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -203,20 +230,10 @@ async def member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention_enabled = group.get('welcome_mention', True)
 
     for m in update.message.new_chat_members:
-        try:
-            formatted_text = msg.format(
-                first=escape_markdown(m.first_name or "", version=2),
-                fullname=escape_markdown(m.full_name, version=2),
-                username=escape_markdown(f"@{m.username}" if m.username else "", version=2),
-                mention=m.mention_markdown_v2(),
-                chatname=escape_markdown(update.effective_chat.title or "", version=2)
-            )
-            if not mention_enabled:
-                # If mentions are disabled, replace the markdown mention with plain full name
-                formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
-            await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception as e:
-            print(f"Error sending welcome message for new member {m.id}: {e}")
+        formatted_text = _format_member_message(msg, m, update.effective_chat.title)
+        if not mention_enabled:
+            formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
+        await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 @error_handler
@@ -231,20 +248,10 @@ async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention_enabled = group.get('goodbye_mention', True)
     m = update.message.left_chat_member
 
-    try:
-        formatted_text = msg.format(
-            first=escape_markdown(m.first_name or "", version=2),
-            fullname=escape_markdown(m.full_name, version=2),
-            username=escape_markdown(f"@{m.username}" if m.username else "", version=2),
-            mention=m.mention_markdown_v2(),
-            chatname=escape_markdown(update.effective_chat.title or "", version=2)
-        )
-        if not mention_enabled:
-            # If mentions are disabled, replace the markdown mention with plain full name
-            formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
-        await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
-    except Exception as e:
-        print(f"Error sending goodbye message for left member {m.id}: {e}")
+    formatted_text = _format_member_message(msg, m, update.effective_chat.title)
+    if not mention_enabled:
+        formatted_text = formatted_text.replace(m.mention_markdown_v2(), escape_markdown(m.full_name, version=2))
+    await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode=ParseMode.MARKDOWN_V2)
 
 @error_handler
 async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,6 +293,30 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Filter not found.")
 
+def _check_entities(update: Update, entity_type: str) -> bool:
+    """Helper to check for entities in a message or its caption."""
+    if update.message.entities:
+        for entity in update.message.entities:
+            if entity.type == entity_type:
+                return True
+    if update.message.caption_entities:
+        for entity in update.message.caption_entities:
+            if entity.type == entity_type:
+                return True
+    return False
+
+def _check_entities(update: Update, entity_type: str) -> bool:
+    """Helper to check for entities in a message or its caption."""
+    if update.message.entities:
+        for entity in update.message.entities:
+            if entity.type == entity_type:
+                return True
+    if update.message.caption_entities:
+        for entity in update.message.caption_entities:
+            if entity.type == entity_type:
+                return True
+    return False
+
 @error_handler
 async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.from_user:
@@ -303,18 +334,6 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     should_delete = False
 
-    # Helper to check for entities
-    def _check_entities(entity_type):
-        if update.message.entities:
-            for entity in update.message.entities:
-                if entity.type == entity_type:
-                    return True
-        if update.message.caption_entities:
-            for entity in update.message.caption_entities:
-                if entity.type == entity_type:
-                    return True
-        return False
-
     # Mapping of lock types to message attributes/conditions
     lock_checks = {
         "all": True,  # If "all" is locked, always delete
@@ -326,7 +345,7 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "document": update.message.document,
         "gif": update.message.animation,
         "sticker": update.message.sticker,
-        "emoji": _check_entities("custom_emoji"),
+        "emoji": _check_entities(update, "custom_emoji"),
         "video_note": update.message.video_note,
         "album": update.message.media_group_id,
         "contact": update.message.contact,
@@ -338,15 +357,15 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "forwardbot": update.message.forward_from and update.message.forward_from.is_bot,
         "forwardchannel": update.message.forward_from_chat and update.message.forward_from_chat.type == "channel",
         "forwarduser": update.message.forward_from and not update.message.forward_from.is_bot,
-        "url": _check_entities("url"),
-        "email": _check_entities("email"),
-        "cashtag": _check_entities("cashtag"),
-        "command": _check_entities("bot_command"),
-        "phone": _check_entities("phone_number"),
-        "spoiler": _check_entities("spoiler"),
+        "url": _check_entities(update, "url"),
+        "email": _check_entities(update, "email"),
+        "cashtag": _check_entities(update, "cashtag"),
+        "command": _check_entities(update, "bot_command"),
+        "phone": _check_entities(update, "phone_number"),
+        "spoiler": _check_entities(update, "spoiler"),
         "anonchannel": update.message.sender_chat and update.message.sender_chat.type == "channel" and update.message.sender_chat.is_anonymous,
-        "botlink": _check_entities("text_link") and "t.me/" in (update.message.text or update.message.caption or ""),
-        "invitelink": _check_entities("text_link") and ("t.me/joinchat/" in (update.message.text or update.message.caption or "") or "t.me/+" in (update.message.text or update.message.caption or "")),
+        "botlink": _check_entities(update, "text_link") and "t.me/" in (update.message.text or update.message.caption or ""),
+        "invitelink": _check_entities(update, "text_link") and ("t.me/joinchat/" in (update.message.text or update.message.caption or "") or "t.me/+" in (update.message.text or update.message.caption or "")),
     }
 
     for lock_type, condition in lock_checks.items():
@@ -360,18 +379,15 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @error_handler
 async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message or not update.message.text:
-            return
-        chat_id = update.effective_chat.id
-        text = update.message.text.lower()
-        group = load_group(chat_id)
-        for trigger, reply in group.get("filters", {}).items():
-            if trigger in text:
-                await update.message.reply_text(reply)
-                break
-    except Exception as e:
-        pass
+    if not update.message or not update.message.text:
+        return
+    chat_id = update.effective_chat.id
+    text = update.message.text.lower()
+    group = load_group(chat_id)
+    for trigger, reply in group.get("filters", {}).items():
+        if trigger in text:
+            await update.message.reply_text(reply)
+            break
 
 
 
@@ -603,13 +619,7 @@ LOCKABLE_TYPES = [
     "stickerpremium", "text", "url", "video", "videonote", "voice"
 ]
 
-@admin_only
-@error_handler
-async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    group = load_group(chat_id)
-    locks = group.setdefault("locks", {})
-
+def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
     keyboard = []
     for lock_type in LOCKABLE_TYPES:
         status_icon = "🔒" if locks.get(lock_type) else "🔓"
@@ -619,8 +629,16 @@ async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("Lock All", callback_data="toggle_lock_all_lock"),
         InlineKeyboardButton("Unlock All", callback_data="toggle_lock_all_unlock")
     ])
+    return InlineKeyboardMarkup(keyboard)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+@admin_only
+@error_handler
+async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    group = load_group(chat_id)
+    locks = group.setdefault("locks", {})
+
+    reply_markup = _build_locks_keyboard(locks)
     await update.message.reply_text("🔧 Manage group locks:", reply_markup=reply_markup)
 
 @error_handler
@@ -629,7 +647,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     chat_id = query.message.chat.id
     if not await is_user_admin(context, chat_id, query.from_user.id):
-        await query.answer(text="❌ You must be an admin to change this setting.", show_alert=True)
+        await query.answer(text=ADMIN_PERMISSION_MSG, show_alert=True)
         return
 
     bot_rights = await get_bot_admin_rights(context, chat_id)
@@ -695,17 +713,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     permissions = ChatPermissions(**permissions_data)
 
     # Rebuild the keyboard with updated status
-    keyboard = []
-    for l_type in LOCKABLE_TYPES:
-        status_icon = "🔒" if locks.get(l_type) else "🔓"
-        keyboard.append([InlineKeyboardButton(f"{status_icon} {l_type.capitalize()}", callback_data=f"toggle_lock_{l_type}")])
-
-    keyboard.append([
-        InlineKeyboardButton("Lock All", callback_data="toggle_lock_all_lock"),
-        InlineKeyboardButton("Unlock All", callback_data="toggle_lock_all_unlock")
-    ])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _build_locks_keyboard(locks)
     await query.edit_message_text("🔧 Manage group locks:", reply_markup=reply_markup)
     await query.answer(text="✅ Settings updated and applied!")
 
@@ -791,26 +799,23 @@ PERMISSION_MAP = {
 }
 
 async def get_bot_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> ChatAdministratorRights:
-    try:
-        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-        if bot_member.status == 'administrator':
-            return ChatAdministratorRights(
-                can_manage_chat=bot_member.can_manage_chat,
-                can_delete_messages=bot_member.can_delete_messages,
-                can_manage_video_chats=bot_member.can_manage_video_chats,
-                can_restrict_members=bot_member.can_restrict_members,
-                can_promote_members=bot_member.can_promote_members,
-                can_change_info=bot_member.can_change_info,
-                can_invite_users=bot_member.can_invite_users,
-                can_pin_messages=bot_member.can_pin_messages,
-                is_anonymous=bot_member.is_anonymous,
-                can_manage_topics=bot_member.can_manage_topics,
-                can_post_stories=bot_member.can_post_stories,
-                can_edit_stories=bot_member.can_edit_stories,
-                can_delete_stories=bot_member.can_delete_stories,
-            )
-    except Exception as e:
-        print(f"Error getting bot admin rights for chat {chat_id}: {e}")
+    bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+    if bot_member.status == 'administrator':
+        return ChatAdministratorRights(
+            can_manage_chat=bot_member.can_manage_chat,
+            can_delete_messages=bot_member.can_delete_messages,
+            can_manage_video_chats=bot_member.can_manage_video_chats,
+            can_restrict_members=bot_member.can_restrict_members,
+            can_promote_members=bot_member.can_promote_members,
+            can_change_info=bot_member.can_change_info,
+            can_invite_users=bot_member.can_invite_users,
+            can_pin_messages=bot_member.can_pin_messages,
+            is_anonymous=bot_member.is_anonymous,
+            can_manage_topics=bot_member.can_manage_topics,
+            can_post_stories=bot_member.can_post_stories,
+            can_edit_stories=bot_member.can_edit_stories,
+            can_delete_stories=bot_member.can_delete_stories,
+        )
     return ChatAdministratorRights() # Return empty rights if not admin or error
 
 @admin_only
@@ -838,6 +843,16 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
     await update.message.reply_text(f"✅ Promoted with title: {custom_title}")
 
+def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) -> InlineKeyboardMarkup:
+    keyboard = []
+    for perm_key, perm_name in PERMISSION_MAP.items():
+        status_icon = "✅" if current_rights_dict.get(perm_name) else "❌"
+        keyboard.append([InlineKeyboardButton(
+            f"{status_icon} {perm_key.replace('_', ' ').capitalize()}", 
+            callback_data=f"toggle_perm_{target_user_id}_{perm_key}"
+        )])
+    return InlineKeyboardMarkup(keyboard)
+
 @admin_only
 @error_handler
 async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -857,15 +872,7 @@ async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for perm_key, perm_name in PERMISSION_MAP.items():
         current_rights_dict[perm_name] = getattr(member, perm_name, False)
 
-    keyboard = []
-    for perm_key, perm_name in PERMISSION_MAP.items():
-        status_icon = "✅" if current_rights_dict.get(perm_name) else "❌"
-        keyboard.append([InlineKeyboardButton(
-            f"{status_icon} {perm_key.replace('_', ' ').capitalize()}", 
-            callback_data=f"toggle_perm_{target_user_id}_{perm_key}"
-        )])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _build_permissions_keyboard(target_user_id, current_rights_dict)
     await update.message.reply_text(
         f"🔧 Managing permissions for {member.user.first_name}:",
         reply_markup=reply_markup
@@ -916,15 +923,7 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await context.bot.promote_chat_member(chat_id, target_user_id, **new_rights.to_dict())
     
     # Rebuild the keyboard with updated status
-    keyboard = []
-    for p_key, p_name in PERMISSION_MAP.items():
-        status_icon = "✅" if new_rights.to_dict().get(p_name) else "❌"
-        keyboard.append([InlineKeyboardButton(
-            f"{status_icon} {p_key.replace('_', ' ').capitalize()}", 
-            callback_data=f"toggle_perm_{target_user_id}_{p_key}"
-        )])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _build_permissions_keyboard(target_user_id, new_rights.to_dict())
     await query.edit_message_text(
         f"🔧 Managing permissions for {member.user.first_name}:",
         reply_markup=reply_markup
@@ -990,11 +989,7 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
 @error_handler
 async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    try:
-        admins = await context.bot.get_chat_administrators(chat_id)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Failed to fetch admins: {e}")
-        return
+    admins = await context.bot.get_chat_administrators(chat_id)
 
     mention_text = " ".join(f"@{admin.user.username}" for admin in admins if admin.user.username)
     reason = " ".join(context.args)
