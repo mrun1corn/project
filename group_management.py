@@ -635,9 +635,14 @@ LOCKABLE_TYPES = [
 
 def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
     keyboard = []
-    for lock_type in LOCKABLE_TYPES:
+    row = []
+    for i, lock_type in enumerate(LOCKABLE_TYPES):
         status_icon = "🔒" if locks.get(lock_type) else "🔓"
-        keyboard.append([InlineKeyboardButton(f"{status_icon} {lock_type.capitalize()}", callback_data=f"toggle_lock_{lock_type}")])
+        button = InlineKeyboardButton(f"{status_icon} {lock_type.capitalize()}", callback_data=f"toggle_lock_{lock_type}")
+        row.append(button)
+        if (i + 1) % 2 == 0 or i == len(LOCKABLE_TYPES) - 1: # Two columns or last button
+            keyboard.append(row)
+            row = []
 
     keyboard.append([
         InlineKeyboardButton("Lock All", callback_data="toggle_lock_all_lock"),
@@ -855,12 +860,17 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) -> InlineKeyboardMarkup:
     keyboard = []
-    for perm_key, perm_name in PERMISSION_MAP.items():
+    row = []
+    for i, (perm_key, perm_name) in enumerate(PERMISSION_MAP.items()):
         status_icon = "✅" if current_rights_dict.get(perm_name) else "❌"
-        keyboard.append([InlineKeyboardButton(
+        button = InlineKeyboardButton(
             f"{status_icon} {perm_key.replace('_', ' ').capitalize()}", 
             callback_data=f"toggle_perm_{target_user_id}_{perm_key}"
-        )])
+        )
+        row.append(button)
+        if (i + 1) % 2 == 0 or i == len(PERMISSION_MAP) - 1: # Two columns or last button
+            keyboard.append(row)
+            row = []
     return InlineKeyboardMarkup(keyboard)
 
 @admin_only
