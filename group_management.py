@@ -46,13 +46,8 @@ def admin_only(func):
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status not in ('administrator', 'creator'):
-                await update.message.reply_text("❌ You must be an admin to use this command.")
-                return
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error checking admin status: {e}")
+        if not await is_user_admin(context, chat_id, user_id):
+            await update.message.reply_text("❌ You must be an admin to use this command.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
@@ -60,9 +55,8 @@ def admin_only(func):
 
 # --------------------- Helper Functions ---------------------
 
-async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+async def is_user_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
+    """Checks if a given user is an admin in a given chat."""
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         return member.status in ('administrator', 'creator')
@@ -129,6 +123,10 @@ async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await is_admin(update, context):
+        await query.edit_message_text("❌ You must be an admin to change this setting.")
+        return
     
     chat_id = query.message.chat.id
     group = load_group(chat_id)
@@ -250,21 +248,43 @@ async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply)
             break
 
+
+
 # --------------------- Moderation ---------------------
 
 @admin_only
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.reply_to_message.from_user.id
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to mute them.")
+        return
+
+    chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("😂 Trying to mute an admin? Bold. But I can't.")
+        return
+
     await context.bot.restrict_chat_member(
-        update.effective_chat.id,
-        user_id,
+        chat_id,
+        target_user_id,
         permissions=ChatPermissions(can_send_messages=False)
     )
     await update.message.reply_text("🔇 User muted.")
 
 @admin_only
 async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.reply_to_message.from_user.id
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to temporarily mute them.")
+        return
+
+    chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("😂 Admins are masters of time. Can't give them a time-out.")
+        return
+
     duration_str = context.args[0] if context.args else "1h"
     duration_sec = parse_time(duration_str)
     if duration_sec == 0:
@@ -273,8 +293,8 @@ async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     until_date = time.time() + duration_sec
     await context.bot.restrict_chat_member(
-        update.effective_chat.id,
-        user_id,
+        chat_id,
+        target_user_id,
         permissions=ChatPermissions(can_send_messages=False),
         until_date=int(until_date)
     )
@@ -295,24 +315,53 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.reply_to_message.from_user.id
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to kick them.")
+        return
+
     chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("👢 Kicking an admin? That's a declaration of war I can't participate in.")
+        return
+
     try:
-        await context.bot.ban_chat_member(chat_id, user_id)
-        await context.bot.unban_chat_member(chat_id, user_id)
+        await context.bot.ban_chat_member(chat_id, target_user_id)
+        await context.bot.unban_chat_member(chat_id, target_user_id)
         await update.message.reply_text("👢 User kicked.")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed to kick user: {e}")
 
 @admin_only
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.reply_to_message.from_user.id
-    await context.bot.ban_chat_member(update.effective_chat.id, user_id)
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to ban them.")
+        return
+
+    chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("🚫 Ban an admin? Nice thought, but it's not happening.")
+        return
+
+    await context.bot.ban_chat_member(chat_id, target_user_id)
     await update.message.reply_text("🚫 User banned.")
 
 @admin_only
 async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.reply_to_message.from_user.id
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a user's message to temporarily ban them.")
+        return
+
+    chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("🚫 Can't put an admin in time-out. They own the naughty corner.")
+        return
+
     duration_str = context.args[0] if context.args else "1d"
     duration_sec = parse_time(duration_str)
     if duration_sec == 0:
@@ -320,7 +369,7 @@ async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     until_date = time.time() + duration_sec
-    await context.bot.ban_chat_member(update.effective_chat.id, user_id, until_date=int(until_date))
+    await context.bot.ban_chat_member(chat_id, target_user_id, until_date=int(until_date))
     await update.message.reply_text(f"🚫 User banned for {duration_str}.")
 
 @admin_only
@@ -344,8 +393,14 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("Reply to a user to warn them.")
         return
+
     chat_id = update.effective_chat.id
     target_user = update.message.reply_to_message.from_user
+
+    if await is_user_admin(context, chat_id, target_user.id):
+        await update.message.reply_text("⚠️ Warn an admin? They probably wrote the rules.")
+        return
+
     group = load_group(chat_id)
     
     warn_counts = group.setdefault('warn_counts', {})
@@ -506,6 +561,10 @@ async def action_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await is_admin(update, context):
+        await query.edit_message_text("❌ You must be an admin to change this setting.")
+        return
     
     chat_id = query.message.chat.id
     group = load_group(chat_id)
@@ -600,10 +659,14 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("Reply to a user's message to demote them.")
         return
-        
-    user_id = update.message.reply_to_message.from_user.id
-    chat_id = update.effective_chat.id
 
+    chat_id = update.effective_chat.id
+    target_user_id = update.message.reply_to_message.from_user.id
+
+    if await is_user_admin(context, chat_id, target_user_id):
+        await update.message.reply_text("😂 Demote an admin? Bold move. It won't work.")
+        return
+        
     try:
         # Create a rights object with all False values
         demote_rights = ChatAdministratorRights(
@@ -613,7 +676,7 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             can_manage_topics=False, can_post_stories=False, can_edit_stories=False,
             can_delete_stories=False,
         )
-        await context.bot.promote_chat_member(chat_id, user_id, **demote_rights.to_dict())
+        await context.bot.promote_chat_member(chat_id, target_user_id, **demote_rights.to_dict())
         await update.message.reply_text("⬇️ User demoted.")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed to demote: {e}")
