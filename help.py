@@ -67,14 +67,12 @@ HELP_TOPICS = {
             "warns": "ℹ️ Usage: `/warns`\nCheck a user's warning count (reply to their message).",
             "warnlimit": "🔢 Usage: `/warnlimit <number>`\nSet the warning limit for the group.",
             "warnmode": "⚙️ Usage: `/warnmode <mute|kick|ban>`\nSet the action for reaching the warning limit.",
-            "lock": "🔒 Usage: `/lock` or `/lock <type|all>` Lock specific chat features. Use without arguments to get interactive buttons.",
-            "unlock": "🔓 Usage: `/unlock` or `/unlock <type|all>` Unlock specific chat features. Use without arguments to get interactive buttons.",
-            "pin": "📌 Usage: `/pin [loud]`\nPin a message (reply or with text). Use 'loud' to notify members.",
+            "locks": "🔒 Usage: `/locks` Manage chat features locks with an interactive menu.",
+            "pin": "📌 Usage: `/pin [loud]` Pin a message (reply or with text). Use 'loud' to notify members.",
             "action": "⚙️ Usage: `/action`\nToggle auto-deletion of service messages (join/left).",
             "tagadmin": "📣 Usage: `/tagadmin [message]` Mention all administrators in the group.",
             "promote": "⬆️ Usage: `/promote [title]`\nPromote a user to admin with a custom title (reply to their message).",
-            "permission": "⚙️ Usage: `/permission` Grant a specific permission to an admin. Reply to their message and use without arguments to get interactive buttons.",
-            "revokeperm": "❌ Usage: `/revokeperm` Revoke a specific permission from an admin. Reply to their message and use without arguments to get interactive buttons.",
+            "permissions": "⚙️ Usage: `/permissions`\nManage admin permissions with an interactive menu (reply to an admin).",
             "demote": "⬇️ Usage: `/demote`\nDemote an admin (reply to their message)."
         }
     }
