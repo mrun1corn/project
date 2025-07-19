@@ -290,10 +290,24 @@ async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_
     import asyncio
     chat_id = update.effective_chat.id
     group = load_group(chat_id)
-    if group.get('action_delete', True) and update.effective_message:
+    
+    # Only proceed if auto-deletion is enabled for the group
+    if not group.get('action_delete', True) or not update.effective_message:
+        return
+
+    # Check if the bot has permission to delete messages
+    bot_rights = await get_bot_admin_rights(context, chat_id)
+    if not bot_rights.can_delete_messages:
+        # Silently return if the bot can't delete messages to avoid spamming logs or chats
+        return
+
+    try:
         # Add a small delay to avoid race conditions
         await asyncio.sleep(0.5)
         await update.effective_message.delete()
+    except Exception as e:
+        # Catch potential errors during deletion (e.g., message too old) and log them
+        print(f"Could not delete service message in chat {chat_id}: {e}")
 
 @admin_only
 @group_management_command_enabled_check("filter")
@@ -1022,22 +1036,48 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Removed save_group here to prevent excessive disk I/O.
     # Member list persistence will need a separate, less frequent mechanism if desired.
 
-@admin_only
 @group_management_command_enabled_check("tagadmin")
 @error_handler
 async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     admins = await context.bot.get_chat_administrators(chat_id)
 
-    mention_text = " ".join(f"@{admin.user.username}" for admin in admins if admin.user.username)
-    reason = escape_markdown(" ".join(context.args), version=2)
+    # Escape underscores in usernames to prevent them from being parsed as Markdown
+    admin_mentions = ["@" + admin.user.username.replace('_', '\\_') for admin in admins if admin.user.username]
 
-    if not mention_text:
+    if not admin_mentions:
         await update.message.reply_text(NO_USERNAME_ADMINS_MSG)
         return
 
-    message = f"📣 *Calling all admins\!*\n{reason}\n\n{mention_text}"
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+    reason = escape_markdown(" ".join(context.args), version=2)
+    header = f"📣 *Calling all admins\!*\n{reason}\n\n"
+    
+    # Telegram's message length limit is 4096 characters. We use a safe buffer.
+    MESSAGE_LIMIT = 4000
+
+    message_chunks = []
+    current_chunk = header
+
+    for mention in admin_mentions:
+        if len(current_chunk) + len(mention) + 1 > MESSAGE_LIMIT:
+            message_chunks.append(current_chunk)
+            current_chunk = ""
+        
+        if not current_chunk: # Start of a new chunk (or the very first one after header)
+            current_chunk = mention
+        else:
+            current_chunk += " " + mention
+
+    if current_chunk: # Add the last chunk
+        message_chunks.append(current_chunk)
+
+    for i, chunk in enumerate(message_chunks):
+        try:
+            # The header is only in the first chunk. Subsequent chunks are just mentions.
+            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception as e:
+            print(f"Error sending admin tag chunk {i+1}/{len(message_chunks)}: {e}")
+            await update.message.reply_text(f"⚠️ Couldn't send a part of the admin list (chunk {i+1}).")
 
 
 # --------------------- Registration ---------------------
