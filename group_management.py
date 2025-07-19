@@ -343,14 +343,16 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _check_entities(update: Update, entity_type: str) -> bool:
     """Helper to check for entities in a message or its caption."""
-    if update.message.entities:
-        for entity in update.message.entities:
-            if entity.type == entity_type:
-                return True
-    if update.message.caption_entities:
-        for entity in update.message.caption_entities:
-            if entity.type == entity_type:
-                return True
+    # Safely get entities and caption_entities, defaulting to empty lists if not present
+    entities = getattr(update.message, 'entities', [])
+    caption_entities = getattr(update.message, 'caption_entities', [])
+
+    for entity in entities:
+        if entity.type == entity_type:
+            return True
+    for entity in caption_entities:
+        if entity.type == entity_type:
+            return True
     return False
 
 @error_handler
@@ -370,44 +372,75 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     should_delete = False
 
-    # Mapping of lock types to message attributes/conditions
-    lock_checks = {
-        "all": True,  # If "all" is locked, always delete
-        "text": update.message.text,
-        "photo": update.message.photo,
-        "video": update.message.video,
-        "audio": update.message.audio,
-        "voice": update.message.voice,
-        "document": update.message.document,
-        "gif": update.message.animation,
-        "sticker": update.message.sticker,
-        "emoji": _check_entities(update, "custom_emoji"),
-        "video_note": update.message.video_note,
-        "album": update.message.media_group_id,
-        "contact": update.message.contact,
-        "location": update.message.location,
-        "poll": update.message.poll,
-        "game": update.message.game,
-        "inline": update.message.via_bot,
-        "forward": update.message and update.message.forward_date,
-        "forwardbot": update.message.forward_from and update.message.forward_from.is_bot,
-        "forwardchannel": update.message.forward_from_chat and update.message.forward_from_chat.type == "channel",
-        "forwarduser": update.message.forward_from and not update.message.forward_from.is_bot,
-        "url": _check_entities(update, "url"),
-        "email": _check_entities(update, "email"),
-        "cashtag": _check_entities(update, "cashtag"),
-        "command": _check_entities(update, "bot_command"),
-        "phone": _check_entities(update, "phone_number"),
-        "spoiler": _check_entities(update, "spoiler"),
-        "anonchannel": update.message.sender_chat and update.message.sender_chat.type == "channel" and update.message.sender_chat.is_anonymous,
-        "botlink": _check_entities(update, "text_link") and "t.me/" in (update.message.text or update.message.caption or ""),
-        "invitelink": _check_entities(update, "text_link") and ("t.me/joinchat/" in (update.message.text or update.message.caption or "") or "t.me/+" in (update.message.text or update.message.caption or "")),
-    }
+    try:
+        # Explicitly check for forward and sender_chat related attributes
+        is_forwarded_from_bot = False
+        is_forwarded_from_channel = False
+        is_forwarded_from_user = False
+        is_anonymous_channel_sender = False
 
-    for lock_type, condition in lock_checks.items():
-        if locks.get(lock_type) and condition:
-            should_delete = True
-            break
+        forward_from = getattr(update.message, 'forward_from', None)
+        if forward_from:
+            if getattr(forward_from, 'is_bot', False):
+                is_forwarded_from_bot = True
+            else:
+                is_forwarded_from_user = True
+        
+        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
+        if forward_from_chat:
+            if getattr(forward_from_chat, 'type', None) == "channel":
+                is_forwarded_from_channel = True
+
+        sender_chat = getattr(update.message, 'sender_chat', None)
+        if sender_chat:
+            if getattr(sender_chat, 'type', None) == "channel" and getattr(sender_chat, 'is_anonymous', False):
+                is_anonymous_channel_sender = True
+
+        # Mapping of lock types to message attributes/conditions
+        lock_checks = {
+            "all": True,
+            "text": bool(getattr(update.message, 'text', None)),
+            "photo": bool(getattr(update.message, 'photo', None)),
+            "video": bool(getattr(update.message, 'video', None)),
+            "audio": bool(getattr(update.message, 'audio', None)),
+            "voice": bool(getattr(update.message, 'voice', None)),
+            "document": bool(getattr(update.message, 'document', None)),
+            "gif": bool(getattr(update.message, 'animation', None)),
+            "sticker": bool(getattr(update.message, 'sticker', None)),
+            "emoji": _check_entities(update, "custom_emoji"),
+            "video_note": bool(getattr(update.message, 'video_note', None)),
+            "album": bool(getattr(update.message, 'media_group_id', None)),
+            "contact": bool(getattr(update.message, 'contact', None)),
+            "location": bool(getattr(update.message, 'location', None)),
+            "poll": bool(getattr(update.message, 'poll', None)),
+            "game": bool(getattr(update.message, 'game', None)),
+            "inline": bool(getattr(update.message, 'via_bot', None)),
+            "forward": bool(getattr(update.message, 'forward_date', None)),
+            "forwardbot": is_forwarded_from_bot,
+            "forwardchannel": is_forwarded_from_channel,
+            "forwarduser": is_forwarded_from_user,
+            "anonchannel": is_anonymous_channel_sender,
+            "url": _check_entities(update, "url"),
+            "email": _check_entities(update, "email"),
+            "cashtag": _check_entities(update, "cashtag"),
+            "command": _check_entities(update, "bot_command"),
+            "phone": _check_entities(update, "phone_number"),
+            "spoiler": _check_entities(update, "spoiler"),
+            "botlink": _check_entities(update, "text_link") and "t.me/" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or ""),
+            "invitelink": _check_entities(update, "text_link") and ("t.me/joinchat/" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or "") or "t.me/+" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or "")),
+        }
+
+        for lock_type, condition in lock_checks.items():
+            if locks.get(lock_type) and condition:
+                should_delete = True
+                break
+    except AttributeError as e:
+        print(f"AttributeError in enforce_locks during lock_checks creation: {e}")
+        # If an AttributeError occurs, assume no locks apply for this message to prevent crash
+        should_delete = False
+    except Exception as e:
+        print(f"Unexpected error in enforce_locks during lock_checks creation: {e}")
+        should_delete = False
 
     if should_delete:
         await update.message.delete()
@@ -1050,20 +1083,26 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
 @group_management_command_enabled_check("tagadmin")
 @error_handler
 async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def escape_html(text: str) -> str:
+        """A simple HTML escaper to replace the one not in the library."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     chat_id = update.effective_chat.id
     admins = await context.bot.get_chat_administrators(chat_id)
 
-    # Escape underscores in usernames to prevent them from being parsed as Markdown
-    admin_mentions = ["@" + admin.user.username.replace('_', '\\_') for admin in admins if admin.user.username]
+    # Create proper HTML mentions: <a href="tg://user?id=USER_ID">@username</a>
+    admin_mentions = [
+        f'<a href="tg://user?id={admin.user.id}">@{escape_html(admin.user.username)}</a>'
+        for admin in admins if admin.user.username
+    ]
 
     if not admin_mentions:
         await update.message.reply_text(NO_USERNAME_ADMINS_MSG)
         return
 
-    reason = escape_markdown(" ".join(context.args), version=2)
-    header = f"📣 *Calling all admins\!*\n{reason}\n\n"
+    reason = escape_html(" ".join(context.args))
+    header = f"📣 <b>Calling all admins!</b>\n{reason}\n\n"
     
-    # Telegram's message length limit is 4096 characters. We use a safe buffer.
     MESSAGE_LIMIT = 4000
 
     message_chunks = []
@@ -1074,21 +1113,22 @@ async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_chunks.append(current_chunk)
             current_chunk = ""
         
-        if not current_chunk: # Start of a new chunk (or the very first one after header)
+        if not current_chunk:
             current_chunk = mention
         else:
             current_chunk += " " + mention
 
-    if current_chunk: # Add the last chunk
+    if current_chunk:
         message_chunks.append(current_chunk)
 
     for i, chunk in enumerate(message_chunks):
         try:
-            # The header is only in the first chunk. Subsequent chunks are just mentions.
-            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
         except Exception as e:
             print(f"Error sending admin tag chunk {i+1}/{len(message_chunks)}: {e}")
             await update.message.reply_text(f"⚠️ Couldn't send a part of the admin list (chunk {i+1}).")
+
+
 
 
 # --------------------- Registration ---------------------
