@@ -26,12 +26,14 @@ BOT_NO_CHANGE_INFO_PERMISSION_MSG = "❌ I don't have permission to change chat 
 BOT_NO_INVITE_USERS_PERMISSION_MSG = "❌ I don't have permission to invite users. Grant me 'Invite Users' right."
 BOT_NO_PIN_MESSAGES_PERMISSION_MSG = "❌ I don't have permission to pin messages. Grant me 'Pin Messages' right."
 BOT_NO_MANAGE_TOPICS_PERMISSION_MSG = "❌ I don't have permission to manage topics. Grant me 'Manage Topics' right."
+BOT_NO_DELETE_MESSAGES_PERMISSION_MSG = "❌ I don't have permission to delete messages. Grant me 'Delete Messages' right."
 USAGE_FILTER_MSG = "Usage: /filter <keyword> <reply>"
 USAGE_STOP_MSG = "Usage: /stop <keyword>"
 USAGE_UNBAN_MSG = "Usage: /unban <user_id>"
 USAGE_WARN_LIMIT_MSG = "Usage: /warnlimit <number>"
 USAGE_WARN_MODE_MSG = "Usage: /warnmode <mute|kick|ban>"
 USAGE_PIN_MSG = "Usage: /pin [loud] <text> or reply to a message."
+USAGE_PURGE_MSG = "Usage: /purge <number> or reply to a message."
 NO_USERNAME_ADMINS_MSG = "No admins with usernames found to mention."
 USER_NOT_ADMIN_PROMOTE_FIRST_MSG = "❌ User is not an admin. Promote them first."
 USER_NO_LONGER_ADMIN_MSG = "❌ User is no longer an admin."
@@ -602,6 +604,64 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.unban_chat_member(update.effective_chat.id, user_id)
     await update.message.reply_text("✅ User unbanned.")
 
+@admin_only
+@group_management_command_enabled_check("purge")
+@bot_has_permissions(["can_delete_messages"])
+@error_handler
+async def purge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args and not update.message.reply_to_message:
+        await update.message.reply_text(USAGE_PURGE_MSG)
+        return
+
+    chat_id = update.effective_chat.id
+    message_ids_to_delete = []
+
+    try:
+        if update.message.reply_to_message:
+            start_message_id = update.message.reply_to_message.message_id
+            num_messages = int(context.args[0]) if context.args else 1
+            
+            # Fetch messages from start_message_id backwards
+            # Telegram Bot API doesn't have a direct way to fetch messages by range or count backwards easily.
+            # The most reliable way is to iterate and delete.
+            # For simplicity and to avoid hitting API limits with too many getUpdates,
+            # we'll assume a simple deletion from the current message backwards.
+            # A more robust solution would involve storing message IDs or using a different API.
+            
+            # For now, we'll delete from the replied message up to 'num_messages' messages.
+            # This is a simplification. A real implementation might need to fetch message history.
+            for i in range(num_messages):
+                message_ids_to_delete.append(start_message_id - i)
+        else:
+            num_messages = int(context.args[0])
+            # Delete the last 'num_messages' messages including the command message itself
+            for i in range(num_messages + 1): # +1 to include the command message
+                message_ids_to_delete.append(update.message.message_id - i)
+
+        # Ensure unique message IDs and sort them for bulk deletion if API supports it
+        message_ids_to_delete = sorted(list(set(message_ids_to_delete)))
+        
+        # Telegram's deleteMessages only works for messages less than 48 hours old
+        # and up to 100 messages at once.
+        # We'll delete them one by one for simplicity and to handle older messages if needed,
+        # though bulk deletion is more efficient for recent messages.
+        
+        deleted_count = 0
+        for msg_id in message_ids_to_delete:
+            try:
+                await context.bot.delete_message(chat_id, msg_id)
+                deleted_count += 1
+            except Exception as e:
+                # Log error but continue with other messages
+                print(f"Error deleting message {msg_id} in chat {chat_id}: {e}")
+        
+        await update.message.reply_text(f"✅ Purged {deleted_count} messages.")
+
+    except ValueError:
+        await update.message.reply_text(USAGE_PURGE_MSG)
+    except Exception as e:
+        await update.message.reply_text(f"❌ An error occurred during purge: {e}")
+
 # --------------------- Warning System ---------------------
 
 @admin_only
@@ -874,8 +934,26 @@ MINIMAL_ADMIN_RIGHTS = ChatAdministratorRights(
     can_restrict_members=False, can_promote_members=False, can_change_info=False,
     can_invite_users=False, can_pin_messages=False, is_anonymous=False,
     can_manage_topics=False, can_post_stories=False, can_edit_stories=False,
-    can_delete_stories=False,
+    can_delete_stories=False
 )
+
+def _chat_admin_rights_to_dict(rights: ChatAdministratorRights) -> dict:
+    """Converts a ChatAdministratorRights object to a dictionary."""
+    return {
+        "can_manage_chat": rights.can_manage_chat,
+        "can_delete_messages": rights.can_delete_messages,
+        "can_manage_video_chats": rights.can_manage_video_chats,
+        "can_restrict_members": rights.can_restrict_members,
+        "can_promote_members": rights.can_promote_members,
+        "can_change_info": rights.can_change_info,
+        "can_invite_users": rights.can_invite_users,
+        "can_pin_messages": rights.can_pin_messages,
+        "is_anonymous": rights.is_anonymous,
+        "can_manage_topics": rights.can_manage_topics,
+        "can_post_stories": rights.can_post_stories,
+        "can_edit_stories": rights.can_edit_stories,
+        "can_delete_stories": rights.can_delete_stories,
+    }
 
 PERMISSION_MAP = {
     'delete': 'can_delete_messages', 'restrict': 'can_restrict_members',
@@ -931,7 +1009,7 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom_title = " ".join(context.args) if context.args else "Admin"
 
     bot_rights = await get_bot_admin_rights(context, chat_id)
-    promotable_rights = MINIMAL_ADMIN_RIGHTS.to_dict()
+    promotable_rights = _chat_admin_rights_to_dict(MINIMAL_ADMIN_RIGHTS)
 
     # Only grant rights that the bot itself has
     for right, value in promotable_rights.items():
@@ -1015,7 +1093,7 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # Start with a base of all permissions (e.g., MINIMAL_ADMIN_RIGHTS)
     # Then overlay the current permissions from the member object
     # Finally, apply the toggled permission
-    updated_rights_dict = MINIMAL_ADMIN_RIGHTS.to_dict()
+    updated_rights_dict = _chat_admin_rights_to_dict(MINIMAL_ADMIN_RIGHTS)
     for perm_key_map, perm_name_map in PERMISSION_MAP.items():
         updated_rights_dict[perm_name_map] = getattr(member, perm_name_map, False)
 
@@ -1029,10 +1107,10 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     new_rights = ChatAdministratorRights(**updated_rights_dict)
 
-    await context.bot.promote_chat_member(chat_id, target_user_id, **new_rights.to_dict())
+    await context.bot.promote_chat_member(chat_id, target_user_id, **_chat_admin_rights_to_dict(new_rights))
     
     # Rebuild the keyboard with updated status
-    reply_markup = _build_permissions_keyboard(target_user_id, new_rights.to_dict())
+    reply_markup = _build_permissions_keyboard(target_user_id, _chat_admin_rights_to_dict(new_rights))
     await query.edit_message_text(
         f"🔧 Managing permissions for {member.user.first_name}:",
         reply_markup=reply_markup
@@ -1056,7 +1134,7 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Demote by setting all admin rights to False
-    demote_rights = {attr: False for attr in MINIMAL_ADMIN_RIGHTS.to_dict().keys()}
+    demote_rights = {attr: False for attr in _chat_admin_rights_to_dict(MINIMAL_ADMIN_RIGHTS).keys()}
     await context.bot.promote_chat_member(
         chat_id=chat_id,
         user_id=target_user_id,
@@ -1159,6 +1237,7 @@ def register_group_management(app):
     app.add_handler(CommandHandler("tban", tban))
     app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("kick", kick))
+    app.add_handler(CommandHandler("purge", purge))
 
     # Warning System
     app.add_handler(CommandHandler("warn", warn))
