@@ -66,22 +66,8 @@ def main() -> None:
     # Register help command (with buttons and callbacks)
     register_help_handlers(application)
 
-    # Register video/reel link handler
-    video_url_pattern = (
-        r'https?://(www\.)?('
-        r'fb\.watch/[\w\-]+/?|'
-        r'fb\.com/watch/[\w\-]+/?|'
-        r'fb\.com/watch\?v=\d+/?(?:&.*)?|'
-        r'facebook\.com/watch/[\w\-]+/?|'
-        r'facebook\.com/watch\?v=\d+/?(?:&.*)?|'
-        r'facebook\.com/reel/\d+/?|'
-        r'facebook\.com/share/v/[\w\-]+/?|'
-        r'facebook\.com/share/r/[\w\-]+/?|'
-        r'facebook\.com/[^/]+/videos/\d+/?|'
-        r'instagram\.com/reel/[\w\-]+/?'
-        r')'
-    )
-    application.add_handler(MessageHandler(filters.Regex(video_url_pattern) & ~filters.COMMAND, handle_video_link))
+    # Register video/reel link handler (handled by reel.py)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_link))
 
     # Register shell command handlers
     register_shell_handlers(application)

@@ -31,6 +31,7 @@ def load_command_states():
         'reboot': True,
         'music': True,
         'video': True,
+        'reel': True,
         'bgremove': True,
         'store': True,
         'getnote': True,
