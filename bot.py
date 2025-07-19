@@ -17,7 +17,7 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID
 from shell import register_shell_handlers
 from bg_remove import remove_bg
 from gemini import ai_command
-from reel import handle_video_link
+from reel import handle_video_link, VIDEO_URL_REGEX
 from sticker import kang
 from group_management import register_group_management
 from notes import register_note_handlers
@@ -66,8 +66,8 @@ def main() -> None:
     # Register help command (with buttons and callbacks)
     register_help_handlers(application)
 
-    # Register video/reel link handler (handled by reel.py)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_link))
+    # Register video/reel link handler
+    application.add_handler(MessageHandler(filters.Regex(VIDEO_URL_REGEX) & ~filters.COMMAND, handle_video_link))
 
     # Register shell command handlers
     register_shell_handlers(application)
