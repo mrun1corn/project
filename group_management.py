@@ -854,24 +854,35 @@ PERMISSION_MAP = {
 }
 
 async def get_bot_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> ChatAdministratorRights:
-    bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-    if bot_member.status == 'administrator':
-        return ChatAdministratorRights(
-            can_manage_chat=bot_member.can_manage_chat,
-            can_delete_messages=bot_member.can_delete_messages,
-            can_manage_video_chats=bot_member.can_manage_video_chats,
-            can_restrict_members=bot_member.can_restrict_members,
-            can_promote_members=bot_member.can_promote_members,
-            can_change_info=bot_member.can_change_info,
-            can_invite_users=bot_member.can_invite_users,
-            can_pin_messages=bot_member.can_pin_messages,
-            is_anonymous=bot_member.is_anonymous,
-            can_manage_topics=bot_member.can_manage_topics,
-            can_post_stories=bot_member.can_post_stories,
-            can_edit_stories=bot_member.can_edit_stories,
-            can_delete_stories=bot_member.can_delete_stories,
-        )
-    return ChatAdministratorRights() # Return empty rights if not admin or error
+    try:
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+        if bot_member.status == 'administrator':
+            return ChatAdministratorRights(
+                can_manage_chat=bot_member.can_manage_chat,
+                can_delete_messages=bot_member.can_delete_messages,
+                can_manage_video_chats=bot_member.can_manage_video_chats,
+                can_restrict_members=bot_member.can_restrict_members,
+                can_promote_members=bot_member.can_promote_members,
+                can_change_info=bot_member.can_change_info,
+                can_invite_users=bot_member.can_invite_users,
+                can_pin_messages=bot_member.can_pin_messages,
+                is_anonymous=bot_member.is_anonymous,
+                can_manage_topics=bot_member.can_manage_topics,
+                can_post_stories=bot_member.can_post_stories,
+                can_edit_stories=bot_member.can_edit_stories,
+                can_delete_stories=bot_member.can_delete_stories,
+            )
+    except Exception as e:
+        print(f"Error getting bot admin rights for chat {chat_id}: {e}")
+    
+    # Return a ChatAdministratorRights object with all permissions set to False
+    return ChatAdministratorRights(
+        can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+        can_restrict_members=False, can_promote_members=False, can_change_info=False,
+        can_invite_users=False, can_pin_messages=False, is_anonymous=False,
+        can_manage_topics=False, can_post_stories=False, can_edit_stories=False,
+        can_delete_stories=False
+    )
 
 @admin_only
 @group_management_command_enabled_check("promote")
