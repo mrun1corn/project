@@ -114,6 +114,8 @@ async def show_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 @notes_command_enabled_check("getnote")
 async def get_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
     text = update.message.text.strip()
     if not text.startswith("#"):
         return

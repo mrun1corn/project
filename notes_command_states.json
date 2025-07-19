@@ -1,8 +1,34 @@
 {
     "notes_commands": {
-        "keep": true,
-        "notes": true,
-        "delete": true,
-        "getnote": true
+        "keep": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        },
+        "notes": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        },
+        "delete": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        },
+        "getnote": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        },
+        "-1002789596660": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        }
     }
 }

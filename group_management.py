@@ -143,7 +143,10 @@ def admin_only(func):
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         if not await is_user_admin(context, chat_id, user_id):
-            await update.message.reply_text(ADMIN_ONLY_MSG)
+            if update.callback_query:
+                await update.callback_query.answer(ADMIN_ONLY_MSG, show_alert=True)
+            elif update.message:
+                await update.message.reply_text(ADMIN_ONLY_MSG)
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
@@ -372,7 +375,7 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "poll": update.message.poll,
         "game": update.message.game,
         "inline": update.message.via_bot,
-        "forward": update.message.forward_date,
+        "forward": update.message and update.message.forward_date,
         "forwardbot": update.message.forward_from and update.message.forward_from.is_bot,
         "forwardchannel": update.message.forward_from_chat and update.message.forward_from_chat.type == "channel",
         "forwarduser": update.message.forward_from and not update.message.forward_from.is_bot,
@@ -682,10 +685,15 @@ async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    
+    await query.answer()
+
+    if not query.message:
+        await query.edit_message_text("This button is no longer valid or the message is inaccessible.")
+        return
+
     chat_id = query.message.chat.id
     if not await is_user_admin(context, chat_id, query.from_user.id):
-        await query.answer(text=ADMIN_PERMISSION_MSG, show_alert=True)
+        # No need for another answer, just return
         return
 
     group = load_group(chat_id)
@@ -1022,14 +1030,14 @@ async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admins = await context.bot.get_chat_administrators(chat_id)
 
     mention_text = " ".join(f"@{admin.user.username}" for admin in admins if admin.user.username)
-    reason = " ".join(context.args)
+    reason = escape_markdown(" ".join(context.args), version=2)
 
     if not mention_text:
         await update.message.reply_text(NO_USERNAME_ADMINS_MSG)
         return
 
-    message = f"📣 **Calling all admins!**\n{reason}\n\n{mention_text}"
-    await update.message.reply_text(message, parse_mode="Markdown")
+    message = f"📣 *Calling all admins\!*\n{reason}\n\n{mention_text}"
+    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 # --------------------- Registration ---------------------
