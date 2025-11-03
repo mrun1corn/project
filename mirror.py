@@ -19,7 +19,7 @@ from aiohttp import BasicAuth, ClientSession, ClientTimeout
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
-from telegram.ext import ContextTypes
+from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from settings import settings
 from comm_checker import check_user_approval, check_command_enabled
@@ -27,11 +27,14 @@ from comm_checker import check_user_approval, check_command_enabled
 
 ALLOWED_TARGETS = {"pixeldrain", "gofile"}
 TARGET_LABELS = {"pixeldrain": "PixelDrain", "gofile": "GoFile"}
+CANCEL_CALLBACK_PREFIX = "mirror_cancel"
 STATUS_EMOJIS = {
     "queued": "🟡",
     "downloading": "⬇️",
     "uploading": "⬆️",
     "compressing": "🗜️",
+    "cancelling": "⏹️",
+    "cancelled": "🚫",
     "completed": "✅",
     "error": "❌",
 }
@@ -192,6 +195,10 @@ class MirrorTask:
     is_directory: bool = False
     last_update: float = field(default_factory=lambda: 0.0)
     status_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    cancel_requested: bool = False
+    cancelled: bool = False
+    cancel_reason: Optional[str] = None
     finished: bool = False
     current_target: Optional[str] = None
 
@@ -203,9 +210,12 @@ class MirrorTask:
             self.last_update = now
 
             emoji = STATUS_EMOJIS.get(self.phase, "ℹ️")
+            short_id = self.task_id[:8] if self.task_id else "--"
             lines = [f"{emoji} <b>Status:</b> {self.phase.title()}"]
             if self.name:
                 lines.append(f"<b>Name:</b> <code>{html.escape(self.name)}</code>")
+            if self.task_id:
+                lines.append(f"<b>Task ID:</b> <code>{self.task_id}</code>")
             duration = now - self.created_at
             lines.append(f"<b>Elapsed:</b> {_format_eta(int(duration))}")
 
@@ -235,8 +245,29 @@ class MirrorTask:
                     lines.append("<i>Uploading to mirror target…</i>")
             elif self.phase == "completed" and self.upload_link:
                 lines.append("<b>Result:</b> Ready")
+            elif self.phase == "cancelled":
+                reason = self.cancel_reason or self.error
+                if reason:
+                    lines.append(f"<b>Cancelled:</b> {html.escape(reason)}")
+            elif self.phase == "cancelling":
+                if self.cancel_reason:
+                    lines.append(f"<i>{html.escape(self.cancel_reason)}</i>")
+                else:
+                    lines.append("<i>Waiting for background tasks to stop…</i>")
             elif self.phase == "error" and self.error:
                 lines.append(f"<b>Error:</b> {html.escape(self.error)}")
+
+            if (
+                not self.finished
+                and not self.cancel_requested
+                and self.phase not in {"completed", "cancelled", "cancelling", "error"}
+                and self.task_id
+            ):
+                cancel_cmd = f"/cancel {self.task_id}"
+                lines.append(
+                    f"<i>Tap ⛔ {short_id} below or send</i> <code>{cancel_cmd}</code>"
+                    " <i>to stop this task.</i>"
+                )
 
             text = "\n".join(lines)
 
@@ -244,6 +275,15 @@ class MirrorTask:
             if self.phase == "completed" and self.upload_link:
                 reply_markup = InlineKeyboardMarkup(
                     [[InlineKeyboardButton("Open Link", url=self.upload_link)]]
+                )
+            elif (
+                not self.finished
+                and not self.cancel_requested
+                and self.phase not in {"cancelled", "cancelling", "error"}
+            ):
+                button_text = f"⛔ {short_id}"
+                reply_markup = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton(button_text, callback_data=f"{CANCEL_CALLBACK_PREFIX}:{self.task_id}")]]
                 )
 
             try:
@@ -268,6 +308,60 @@ class MirrorTask:
 
 
 ACTIVE_TASKS: Dict[str, MirrorTask] = {}
+USER_TASKS: Dict[int, set[str]] = {}
+
+
+class MirrorCancelled(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _cancel_reason(task: MirrorTask) -> str:
+    return task.cancel_reason or "Cancelled"
+
+
+def _ensure_not_cancelled(task: MirrorTask) -> None:
+    if task.cancel_requested:
+        raise MirrorCancelled(_cancel_reason(task))
+
+
+def _track_task(task: MirrorTask) -> None:
+    ACTIVE_TASKS[task.task_id] = task
+    USER_TASKS.setdefault(task.user_id, set()).add(task.task_id)
+
+
+def _untrack_task(task: MirrorTask) -> None:
+    ACTIVE_TASKS.pop(task.task_id, None)
+    user_tasks = USER_TASKS.get(task.user_id)
+    if user_tasks is not None:
+        user_tasks.discard(task.task_id)
+        if not user_tasks:
+            USER_TASKS.pop(task.user_id, None)
+
+
+async def _request_task_cancel(task: MirrorTask, reason: str) -> bool:
+    if task.finished or task.cancelled or task.cancel_requested:
+        return False
+    task.cancel_requested = True
+    task.cancel_reason = reason
+    task.phase = "cancelling"
+    task.error = reason
+    task.cancel_event.set()
+    await task.update_message(force=True)
+    return True
+
+
+def _get_task_by_status_message(message_id: int) -> Optional[MirrorTask]:
+    for task in ACTIVE_TASKS.values():
+        if task.status_message_id == message_id:
+            return task
+    return None
+
+
+def _get_user_active_tasks(user_id: int) -> list[MirrorTask]:
+    task_ids = USER_TASKS.get(user_id, set())
+    return [ACTIVE_TASKS[task_id] for task_id in task_ids if task_id in ACTIVE_TASKS]
 
 
 async def mirror_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -334,7 +428,8 @@ async def mirror_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         application=context.application,
         name=source_name or task_id,
     )
-    ACTIVE_TASKS[task_id] = task
+    _track_task(task)
+    await task.update_message(force=True)
 
     context.application.create_task(
         _run_mirror_task(task, update, context, source)
@@ -357,6 +452,7 @@ async def _run_mirror_task(
 
     try:
         print(f"[MIRROR] Task {task.task_id} started. Download dir: {task_dir}")
+        _ensure_not_cancelled(task)
         src_type, payload = source
         if src_type == "telegram":
             local_path, name = await _download_from_telegram(task, context, payload, task_dir)
@@ -385,6 +481,7 @@ async def _run_mirror_task(
         task.local_path = local_path
         task.is_directory = is_dir or os.path.isdir(local_path)
         task.name = name or os.path.basename(local_path)
+        _ensure_not_cancelled(task)
         task.phase = "uploading"
         print(f"[MIRROR] Task {task.task_id} download complete. Path: {local_path}")
         await task.update_message(force=True)
@@ -396,6 +493,14 @@ async def _run_mirror_task(
         task.progress = 100.0
         task.speed = None
         await task.update_message(force=True)
+    except MirrorCancelled as exc:
+        task.cancelled = True
+        task.phase = "cancelled"
+        task.error = exc.reason
+        task.speed = None
+        task.upload_link = None
+        print(f"[MIRROR] Task {task.task_id} cancelled: {exc.reason}")
+        await task.update_message(force=True)
 
     except Exception as exc:
         task.phase = "error"
@@ -405,7 +510,8 @@ async def _run_mirror_task(
         await task.update_message(force=True)
     finally:
         task.finished = True
-        ACTIVE_TASKS.pop(task.task_id, None)
+        task.cancel_event.set()
+        _untrack_task(task)
         try:
             if os.path.isdir(task_dir):
                 print(f"[MIRROR] Task {task.task_id} cleaning up {task_dir}")
@@ -426,6 +532,7 @@ async def _download_from_telegram(task: MirrorTask, context: ContextTypes.DEFAUL
     task.phase = "downloading"
     task.total_bytes = getattr(file, "file_size", None)
     await task.update_message(force=True)
+    _ensure_not_cancelled(task)
     downloaded_name, full_path = await _download_http_stream(
         task,
         download_url,
@@ -440,6 +547,7 @@ async def _download_from_telegram(task: MirrorTask, context: ContextTypes.DEFAUL
 async def _download_from_url(task: MirrorTask, url: str, task_dir: str) -> Tuple[str, str]:
     task.phase = "downloading"
     await task.update_message(force=True)
+    _ensure_not_cancelled(task)
     filename, path = await _download_http_stream(task, url, task_dir)
     return path, filename
 
@@ -472,6 +580,7 @@ async def _download_http_stream(
             print(f"[MIRROR] Task {task.task_id} writing to {dest_path}")
             with open(dest_path, "wb") as f:
                 async for chunk in response.content.iter_chunked(1024 * 512):
+                    _ensure_not_cancelled(task)
                     f.write(chunk)
                     task.downloaded_bytes += len(chunk)
                     chunk_count += 1
@@ -484,6 +593,7 @@ async def _download_http_stream(
                         await task.update_message()
 
             task.progress = 100.0
+            _ensure_not_cancelled(task)
             await task.update_message(force=True)
             print(f"[MIRROR] Task {task.task_id} HTTP download completed")
             return filename, dest_path
@@ -493,6 +603,7 @@ async def _download_torrent(task: MirrorTask, magnet: str, task_dir: str) -> Tup
     client = await _get_qb_client()
     infohash = _extract_infohash(magnet)
     save_path = task_dir
+    _ensure_not_cancelled(task)
     await asyncio.to_thread(
         client.torrents_add,
         urls=magnet,
@@ -501,11 +612,13 @@ async def _download_torrent(task: MirrorTask, magnet: str, task_dir: str) -> Tup
         is_sequential_download=True,
         skip_checking=True,
     )
+    _ensure_not_cancelled(task)
     return await _monitor_torrent(task, client, infohash, save_path)
 
 
 async def _download_torrent_from_url(task: MirrorTask, url: str, task_dir: str) -> Tuple[str, bool, str]:
     client = await _get_qb_client()
+    _ensure_not_cancelled(task)
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=1200) as response:
             response.raise_for_status()
@@ -520,6 +633,7 @@ async def _download_torrent_from_url(task: MirrorTask, url: str, task_dir: str) 
         is_sequential_download=True,
         skip_checking=True,
     )
+    _ensure_not_cancelled(task)
     # After adding, fetch newest torrent hash
     expected_name = os.path.splitext(filename_hint)[0] if filename_hint else None
     return await _monitor_torrent(task, client, None, save_path, expected_name=expected_name)
@@ -532,6 +646,7 @@ async def _download_torrent_from_file(
     original_name: Optional[str],
 ) -> Tuple[str, bool, str]:
     client = await _get_qb_client()
+    _ensure_not_cancelled(task)
     with open(file_path, "rb") as f:
         torrent_data = f.read()
     try:
@@ -546,6 +661,7 @@ async def _download_torrent_from_file(
         is_sequential_download=True,
         skip_checking=True,
     )
+    _ensure_not_cancelled(task)
     expected_name = None
     if original_name:
         expected_name = os.path.splitext(original_name)[0]
@@ -561,9 +677,11 @@ async def _monitor_torrent(
 ) -> Tuple[str, bool, str]:
     task.phase = "downloading"
     await task.update_message(force=True)
+    _ensure_not_cancelled(task)
 
     torrent = None
     for _ in range(60):
+        _ensure_not_cancelled(task)
         torrents = await asyncio.to_thread(client.torrents_info)
         if infohash:
             torrents = [t for t in torrents if t.hash == infohash]
@@ -581,6 +699,10 @@ async def _monitor_torrent(
 
     task.name = torrent.name or task.name
     while True:
+        if task.cancel_requested:
+            await asyncio.to_thread(client.torrents_pause, torrent_hashes=torrent.hash)
+            await asyncio.to_thread(client.torrents_delete, torrent_hashes=torrent.hash, delete_files=True)
+            raise MirrorCancelled(_cancel_reason(task))
         await task.update_message()
         task.total_bytes = torrent.total_size or task.total_bytes
         task.downloaded_bytes = int((torrent.total_size or 0) * torrent.progress)
@@ -625,6 +747,7 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
     errors: list[str] = []
     upload_path = path
     cleanup_path = None
+    _ensure_not_cancelled(task)
 
     if os.path.isdir(path):
         task.phase = "compressing"
@@ -633,8 +756,10 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
         archive_base = os.path.join(os.path.dirname(path), f"{os.path.basename(path)}")
         upload_path = await asyncio.to_thread(shutil.make_archive, archive_base, "zip", path)
         cleanup_path = upload_path
+        _ensure_not_cancelled(task)
     try:
         for target in targets:
+            _ensure_not_cancelled(task)
             task.current_target = target
             task.phase = "uploading"
             task.speed = None
@@ -648,13 +773,17 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
             print(f"[MIRROR] Task {task.task_id} preparing upload file: {upload_path} (target={target})")
 
             try:
+                _ensure_not_cancelled(task)
                 if target == "gofile":
+                    _ensure_not_cancelled(task)
                     link = await asyncio.to_thread(_upload_to_gofile, upload_path, os.path.basename(upload_path))
                     task.downloaded_bytes = task.total_bytes or task.downloaded_bytes
                     task.speed = None
                     await task.update_message(force=True)
                 else:
                     link = await _upload_to_pixeldrain_async(task, upload_path)
+            except MirrorCancelled:
+                raise
             except Exception as exc:
                 error_message = f"{target}: {exc}"
                 errors.append(error_message)
@@ -675,6 +804,7 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
 
 
 async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
+    _ensure_not_cancelled(task)
     filename = os.path.basename(filepath)
     total_size = os.path.getsize(filepath)
     task.total_bytes = total_size
@@ -685,6 +815,8 @@ async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
         chunk_size = 1024 * 512
         async with aiofiles.open(filepath, "rb") as f:
             while True:
+                if task.cancel_requested:
+                    raise MirrorCancelled(_cancel_reason(task))
                 chunk = await f.read(chunk_size)
                 if not chunk:
                     break
@@ -695,6 +827,7 @@ async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
                 if elapsed > 0:
                     task.speed = task.downloaded_bytes / elapsed
                 await task.update_message()
+                _ensure_not_cancelled(task)
                 yield chunk
 
     auth = BasicAuth("", settings.pixeldrain_key) if settings.pixeldrain_key else None
@@ -783,3 +916,118 @@ def _upload_to_gofile(filepath: str, filename: str) -> str:
         print(f"[MIRROR] GoFile missing link via {endpoint}: {json_payload}")
 
     raise ValueError("GoFile upload failed: " + "; ".join(errors))
+
+
+async def cancel_mirror_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+
+    user = update.effective_user
+    if not user:
+        return
+
+    task: Optional[MirrorTask] = None
+    reason = None
+
+    args = context.args
+    if args:
+        candidate = args[0].strip()
+        if candidate:
+            task = ACTIVE_TASKS.get(candidate)
+            if task is None:
+                matches = [t for tid, t in ACTIVE_TASKS.items() if tid.startswith(candidate)]
+                if len(matches) == 1:
+                    task = matches[0]
+                elif len(matches) > 1:
+                    await update.message.reply_text(
+                        "Multiple tasks match that ID. Please provide the full task ID."
+                    )
+                    return
+        if task is None:
+            await update.message.reply_text("No active mirror task found with that ID.")
+            return
+    elif update.message.reply_to_message:
+        task = _get_task_by_status_message(update.message.reply_to_message.message_id)
+        if task is None:
+            await update.message.reply_text("That message is not an active mirror status update.")
+            return
+    else:
+        user_tasks = _get_user_active_tasks(user.id)
+        if not user_tasks:
+            await update.message.reply_text("You have no active mirror tasks.")
+            return
+        lines = ["<b>Your active mirror tasks:</b>"]
+        for t in user_tasks:
+            status = t.phase.title()
+            display_name = html.escape(t.name or t.task_id)
+            lines.append(f"- <code>{t.task_id}</code> — {status} ({display_name})")
+        lines.append("Reply to a status message or use <code>/cancel &lt;task_id&gt;</code> to stop one.")
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+        return
+
+    if task.finished:
+        await update.message.reply_text("That task has already finished.")
+        return
+
+    if user.id not in {task.user_id, settings.admin_chat_id}:
+        await update.message.reply_text("You can only cancel your own mirror tasks.")
+        return
+
+    display_name = (user.full_name or "").strip() or str(user.id)
+    reason = f"Cancelled by {display_name}"
+
+    if task.cancel_requested:
+        await update.message.reply_text("Cancellation is already in progress for this task.")
+        return
+
+    cancelled = await _request_task_cancel(task, reason)
+    if cancelled:
+        await update.message.reply_text(
+            f"Cancellation requested for <code>{task.task_id}</code>.", parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text("Unable to cancel that task (it may have already completed).")
+
+
+async def mirror_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+
+    data = query.data or ""
+    if not data.startswith(f"{CANCEL_CALLBACK_PREFIX}:"):
+        await query.answer()
+        return
+    task_id = data.split(":", maxsplit=1)[1]
+    task = ACTIVE_TASKS.get(task_id)
+    if task is None:
+        await query.answer("Task already finished.", show_alert=False)
+        return
+
+    user = query.from_user
+    if not user:
+        return
+
+    if user.id not in {task.user_id, settings.admin_chat_id}:
+        await query.answer("You can only cancel your own mirror tasks.", show_alert=True)
+        return
+
+    if task.cancel_requested:
+        await query.answer("Cancellation already requested.", show_alert=False)
+        return
+
+    display_name = (user.full_name or "").strip() or str(user.id)
+    reason = f"Cancelled by {display_name}"
+    await _request_task_cancel(task, reason)
+    await query.answer("Stopping task…", show_alert=False)
+
+
+def register_mirror_handlers(application) -> None:
+    application.add_handler(CommandHandler("mirror", mirror_command))
+    application.add_handler(CommandHandler("cancel", cancel_mirror_command))
+    application.add_handler(
+        CallbackQueryHandler(
+            mirror_cancel_callback,
+            pattern=rf"^{CANCEL_CALLBACK_PREFIX}:.+",
+        )
+    )

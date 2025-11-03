@@ -19,7 +19,7 @@ from bg_remove import remove_bg
 from gemini import ai_command
 from reel import handle_video_link, VIDEO_URL_REGEX
 from sticker import kang
-from mirror import mirror_command
+from mirror import register_mirror_handlers
 from group_management import register_group_management
 from notes import register_note_handlers
 
@@ -70,7 +70,7 @@ def main() -> None:
     application.add_handler(CommandHandler("bgremove", remove_bg))
     application.add_handler(CommandHandler("ai", ai_command))
     application.add_handler(CommandHandler("kang", kang))
-    application.add_handler(CommandHandler("mirror", mirror_command))
+    register_mirror_handlers(application)
     application.add_handler(CommandHandler("listcommands", list_commands_status))
 
     # Register help command (with buttons and callbacks)

@@ -137,6 +137,8 @@ For active/backup failover using Keepalived:
   Torrents and magnets are handled through qBittorrent; set `QBITTORRENT_*`
   variables to point at your Web UI. Progress messages are updated every few
   seconds (`MIRROR_STATUS_INTERVAL`).
+- `/cancel [task_id]` lets the task owner (or admin) stop an active mirror job. Reply to
+  the status message or provide the task ID shown in the log.
 
 ## 9. Maintenance Tips
 
