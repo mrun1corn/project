@@ -77,10 +77,88 @@ def bot_has_permissions(permissions: list[str]):
 GROUP_DATA_DIR = 'group_data'
 os.makedirs(GROUP_DATA_DIR, exist_ok=True)
 
+# Canonical lock keys used across storage, UI, and enforcement.
+LOCKABLE_TYPES = [
+    "album",
+    "anonchannel",
+    "audio",
+    "bot",
+    "botlink",
+    "cashtag",
+    "command",
+    "contact",
+    "document",
+    "email",
+    "emoji",
+    "forward",
+    "forwardbot",
+    "forwardchannel",
+    "forwarduser",
+    "game",
+    "gif",
+    "inline",
+    "invitelink",
+    "location",
+    "phone",
+    "photo",
+    "poll",
+    "spoiler",
+    "sticker",
+    "stickeranimated",
+    "stickerpremium",
+    "text",
+    "url",
+    "video",
+    "video_note",
+    "voice",
+]
+
+# Human readable labels for lock buttons.
+LOCK_LABELS = {
+    "anonchannel": "Anon Channel",
+    "botlink": "Bot Links",
+    "invitelink": "Invite Links",
+    "stickeranimated": "Animated Sticker",
+    "stickerpremium": "Premium Sticker",
+    "video_note": "Video Note",
+}
+
+# Format lock names for button labels.
+def _lock_label(lock_type: str) -> str:
+    return LOCK_LABELS.get(lock_type, lock_type.replace('_', ' ').title())
+
+# Older persisted keys mapped to the new canonical form.
+LOCK_KEY_ALIASES = {
+    "videonote": "video_note",
+    "videonotes": "video_note",
+    "videoNote": "video_note",
+    "emojicustom": "emoji",
+    "emojigame": "game",
+    "externalreply": "forward",
+    "stickeranimated": "stickeranimated",
+    "sticker_animated": "stickeranimated",
+    "stickerpremium": "stickerpremium",
+    "sticker_premium": "stickerpremium",
+    "botlinks": "botlink",
+    "invitelinks": "invitelink",
+}
+
 _group_cache = {}
 
 def _group_file(chat_id):
     return os.path.join(GROUP_DATA_DIR, f"{chat_id}.json")
+
+def _normalize_locks(raw_locks: dict) -> dict:
+    """Normalize lock keys coming from disk to the canonical list."""
+    if not isinstance(raw_locks, dict):
+        return {}
+
+    normalized = {key: False for key in LOCKABLE_TYPES}
+    for key, value in raw_locks.items():
+        canonical = LOCK_KEY_ALIASES.get(key, key)
+        if canonical in LOCKABLE_TYPES:
+            normalized[canonical] = bool(value)
+    return normalized
 
 def load_group(chat_id):
     if chat_id in _group_cache:
@@ -107,6 +185,7 @@ def load_group(chat_id):
                 group_data.update(loaded_data) # Update default data with loaded data
     except (IOError, json.JSONDecodeError) as e:
         print(f"Error loading group data for chat {chat_id}: {e}")
+    group_data['locks'] = _normalize_locks(group_data.get('locks', {}))
     
     _group_cache[chat_id] = group_data
     return group_data
@@ -343,17 +422,23 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Filter not found.")
 
-def _check_entities(update: Update, entity_type: str) -> bool:
+def _check_entities(update: Update, entity_types) -> bool:
     """Helper to check for entities in a message or its caption."""
+    if not update.message:
+        return False
+
+    if isinstance(entity_types, str):
+        entity_types = (entity_types,)
+
     # Safely get entities and caption_entities, defaulting to empty lists if not present
-    entities = getattr(update.message, 'entities', [])
-    caption_entities = getattr(update.message, 'caption_entities', [])
+    entities = getattr(update.message, 'entities', []) or []
+    caption_entities = getattr(update.message, 'caption_entities', []) or []
 
     for entity in entities:
-        if entity.type == entity_type:
+        if entity.type in entity_types:
             return True
     for entity in caption_entities:
-        if entity.type == entity_type:
+        if entity.type in entity_types:
             return True
     return False
 
@@ -375,77 +460,109 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     should_delete = False
 
     try:
+        message = update.message
+        text_or_caption = getattr(message, 'text', None) or getattr(message, 'caption', None) or ""
+
         # Explicitly check for forward and sender_chat related attributes
         is_forwarded_from_bot = False
         is_forwarded_from_channel = False
         is_forwarded_from_user = False
         is_anonymous_channel_sender = False
 
-        forward_from = getattr(update.message, 'forward_from', None)
+        forward_from = getattr(message, 'forward_from', None)
         if forward_from:
             if getattr(forward_from, 'is_bot', False):
                 is_forwarded_from_bot = True
             else:
                 is_forwarded_from_user = True
-        
-        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
-        if forward_from_chat:
-            if getattr(forward_from_chat, 'type', None) == "channel":
-                is_forwarded_from_channel = True
 
-        sender_chat = getattr(update.message, 'sender_chat', None)
-        if sender_chat:
-            if getattr(sender_chat, 'type', None) == "channel" and getattr(sender_chat, 'is_anonymous', False):
-                is_anonymous_channel_sender = True
+        forward_from_chat = getattr(message, 'forward_from_chat', None)
+        if forward_from_chat and getattr(forward_from_chat, 'type', None) == "channel":
+            is_forwarded_from_channel = True
 
-        # Mapping of lock types to message attributes/conditions
+        sender_chat = getattr(message, 'sender_chat', None)
+        if sender_chat and getattr(sender_chat, 'type', None) == "channel" and getattr(sender_chat, 'is_anonymous', False):
+            is_anonymous_channel_sender = True
+
+        new_members = getattr(message, 'new_chat_members', None) or []
+        bot_members = [member for member in new_members if getattr(member, 'is_bot', False)]
+        bots_joining = bool(bot_members)
+
         lock_checks = {
-            "all": True,
-            "text": bool(getattr(update.message, 'text', None)),
-            "photo": bool(getattr(update.message, 'photo', None)),
-            "video": bool(getattr(update.message, 'video', None)),
-            "audio": bool(getattr(update.message, 'audio', None)),
-            "voice": bool(getattr(update.message, 'voice', None)),
-            "document": bool(getattr(update.message, 'document', None)),
-            "gif": bool(getattr(update.message, 'animation', None)),
-            "sticker": bool(getattr(update.message, 'sticker', None)),
-            "emoji": _check_entities(update, "custom_emoji"),
-            "video_note": bool(getattr(update.message, 'video_note', None)),
-            "album": bool(getattr(update.message, 'media_group_id', None)),
-            "contact": bool(getattr(update.message, 'contact', None)),
-            "location": bool(getattr(update.message, 'location', None)),
-            "poll": bool(getattr(update.message, 'poll', None)),
-            "game": bool(getattr(update.message, 'game', None)),
-            "inline": bool(getattr(update.message, 'via_bot', None)),
-            "forward": bool(getattr(update.message, 'forward_date', None)),
+            "album": bool(getattr(message, 'media_group_id', None)),
+            "anonchannel": is_anonymous_channel_sender,
+            "audio": bool(getattr(message, 'audio', None)),
+            "bot": bots_joining,
+            "botlink": _check_entities(update, ("url", "text_link")) and (
+                "t.me/" in text_or_caption
+            ),
+            "cashtag": _check_entities(update, "cashtag"),
+            "command": _check_entities(update, "bot_command"),
+            "contact": bool(getattr(message, 'contact', None)),
+            "document": bool(getattr(message, 'document', None)),
+            "email": _check_entities(update, "email"),
+            "emoji": _check_entities(update, ("custom_emoji",)),
+            "forward": bool(getattr(message, 'forward_date', None)),
             "forwardbot": is_forwarded_from_bot,
             "forwardchannel": is_forwarded_from_channel,
             "forwarduser": is_forwarded_from_user,
-            "anonchannel": is_anonymous_channel_sender,
-            "url": _check_entities(update, "url"),
-            "email": _check_entities(update, "email"),
-            "cashtag": _check_entities(update, "cashtag"),
-            "command": _check_entities(update, "bot_command"),
+            "game": bool(getattr(message, 'game', None)),
+            "gif": bool(getattr(message, 'animation', None)),
+            "inline": bool(getattr(message, 'via_bot', None)),
+            "invitelink": _check_entities(update, ("url", "text_link")) and (
+                "t.me/joinchat/" in text_or_caption or "t.me/+" in text_or_caption
+            ),
+            "location": bool(getattr(message, 'location', None)),
             "phone": _check_entities(update, "phone_number"),
+            "photo": bool(getattr(message, 'photo', None)),
+            "poll": bool(getattr(message, 'poll', None)),
             "spoiler": _check_entities(update, "spoiler"),
-            "botlink": _check_entities(update, "text_link") and "t.me/" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or ""),
-            "invitelink": _check_entities(update, "text_link") and ("t.me/joinchat/" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or "") or "t.me/+" in (getattr(update.message, 'text', "") or getattr(update.message, 'caption', "") or "")),
+            "sticker": bool(getattr(message, 'sticker', None) and not (
+                getattr(message.sticker, "is_animated", False)
+                or getattr(message.sticker, "is_video", False)
+                or getattr(message.sticker, "is_premium", False)
+            )),
+            "stickeranimated": bool(getattr(message, 'sticker', None) and (
+                getattr(message.sticker, "is_animated", False)
+                or getattr(message.sticker, "is_video", False)
+            )),
+            "stickerpremium": bool(getattr(message, 'sticker', None) and getattr(message.sticker, "is_premium", False)),
+            "text": bool(text_or_caption.strip()),
+            "url": _check_entities(update, ("url", "text_link")),
+            "video": bool(getattr(message, 'video', None)),
+            "video_note": bool(getattr(message, 'video_note', None)),
+            "voice": bool(getattr(message, 'voice', None)),
         }
 
-        for lock_type, condition in lock_checks.items():
-            if locks.get(lock_type) and condition:
-                should_delete = True
-                break
+        triggered_locks = [lock_type for lock_type, condition in lock_checks.items() if locks.get(lock_type) and condition]
+
+        if "bot" in triggered_locks and bot_members:
+            bot_rights = await get_bot_admin_rights(context, chat_id)
+            if bot_rights.can_restrict_members:
+                for member in bot_members:
+                    try:
+                        await context.bot.ban_chat_member(chat_id, member.id)
+                        await context.bot.unban_chat_member(chat_id, member.id)
+                    except Exception as e:
+                        print(f"Error removing bot {member.id} from chat {chat_id}: {e}")
+            else:
+                print(f"Missing restrict_members permission to enforce bot lock in chat {chat_id}")
+
+        should_delete = bool(triggered_locks)
     except AttributeError as e:
         print(f"AttributeError in enforce_locks during lock_checks creation: {e}")
-        # If an AttributeError occurs, assume no locks apply for this message to prevent crash
+        triggered_locks = []
         should_delete = False
     except Exception as e:
         print(f"Unexpected error in enforce_locks during lock_checks creation: {e}")
+        triggered_locks = []
         should_delete = False
 
     if should_delete:
-        await update.message.delete()
+        try:
+            await update.message.delete()
+        except Exception as e:
+            print(f"Failed to delete locked message in chat {chat_id}: {e}")
 
 
 @error_handler
@@ -655,7 +772,7 @@ async def purge(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Log error but continue with other messages
                 print(f"Error deleting message {msg_id} in chat {chat_id}: {e}")
         
-        await update.message.reply_text(f"✅ Purged {deleted_count} messages.")
+        await context.bot.send_message(chat_id, f"✅ Purged {deleted_count} messages.")
 
     except ValueError:
         await update.message.reply_text(USAGE_PURGE_MSG)
@@ -686,13 +803,17 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     warn_counts[user_id_str] = warn_counts.get(user_id_str, 0) + 1
     
     limit = group.get('warn_limit', 3)
-    reason = " ".join(context.args)
-    
-    await update.message.reply_text(
-        f"⚠️ Warned {target_user.mention_markdown_v2()} ({warn_counts[user_id_str]}/{limit})."
-        f"\nReason: {reason or 'No reason specified.'}",
-        parse_mode="MarkdownV2"
+    reason = " ".join(context.args).strip()
+    default_reason = escape_markdown("No reason specified", version=2)
+    reason_text = escape_markdown(reason, version=2) if reason else default_reason
+
+    warn_message = (
+        f"⚠️ Warned {target_user.mention_markdown_v2()} "
+        f"\\({warn_counts[user_id_str]}/{limit}\\).\n"
+        f"Reason: {reason_text}"
     )
+
+    await update.message.reply_text(warn_message, parse_mode="MarkdownV2")
 
     if warn_counts[user_id_str] >= limit:
         mode = group.get('warn_mode', 'mute')
@@ -720,7 +841,10 @@ async def warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = load_group(chat_id)
     
     count = group.get('warn_counts', {}).get(str(target_user.id), 0)
-    await update.message.reply_text(f"User {target_user.mention_markdown_v2()} has {count} warnings.", parse_mode="MarkdownV2")
+    await update.message.reply_text(
+        f"User {target_user.mention_markdown_v2()} has {count} warnings\\.",
+        parse_mode="MarkdownV2"
+    )
 
 @admin_only
 @group_management_command_enabled_check("warnlimit")
@@ -751,20 +875,13 @@ async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------- Group Settings ---------------------
 
-LOCKABLE_TYPES = [
-    "album", "anonchannel", "audio", "bot", "cashtag", "command", "contact", 
-    "document", "email", "emoji", "emojicustom", "emojigame", "externalreply", "forward", 
-    "forwardbot", "forwardchannel", "forwarduser", "game", "gif", "inline", 
-    "location", "phone", "photo", "poll", "spoiler", "sticker", "stickeranimated", 
-    "stickerpremium", "text", "url", "video", "videonote", "voice"
-]
-
 def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
     keyboard = []
     row = []
     for i, lock_type in enumerate(LOCKABLE_TYPES):
         status_icon = "🔒" if locks.get(lock_type) else "🔓"
-        button = InlineKeyboardButton(f"{status_icon} {lock_type.capitalize()}", callback_data=f"toggle_lock_{lock_type}")
+        label = _lock_label(lock_type)
+        button = InlineKeyboardButton(f"{status_icon} {label}", callback_data=f"toggle_lock_{lock_type}")
         row.append(button)
         if (i + 1) % 2 == 0 or i == len(LOCKABLE_TYPES) - 1: # Two columns or last button
             keyboard.append(row)
@@ -784,6 +901,8 @@ async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     group = load_group(chat_id)
     locks = group.setdefault("locks", {})
+    for key in LOCKABLE_TYPES:
+        locks.setdefault(key, False)
 
     reply_markup = _build_locks_keyboard(locks)
     await update.message.reply_text("🔧 Manage group locks:", reply_markup=reply_markup)
@@ -805,16 +924,29 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     group = load_group(chat_id)
     locks = group.setdefault("locks", {})
+    for key in LOCKABLE_TYPES:
+        locks.setdefault(key, False)
     original_locks = locks.copy()
 
     _, _, *data = query.data.split('_')
-    lock_type = data[0]
+    if not data:
+        await query.answer("Invalid option.", show_alert=True)
+        return
 
-    if lock_type == "all":
+    raw_lock = data[0]
+
+    if raw_lock == "all":
+        if len(data) < 2:
+            await query.answer("Invalid option.", show_alert=True)
+            return
         action = data[1]
         for l_type in LOCKABLE_TYPES:
             locks[l_type] = action == "lock"
     else:
+        lock_type = LOCK_KEY_ALIASES.get(raw_lock, raw_lock)
+        if lock_type not in LOCKABLE_TYPES:
+            await query.edit_message_text("❌ Invalid lock selected.")
+            return
         locks[lock_type] = not locks.get(lock_type, False)
 
     if original_locks == locks:
@@ -824,43 +956,47 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_group(chat_id, group)
 
     # Apply permissions to the chat
-    # Create a new dictionary with all valid ChatPermissions arguments, defaulting to True
     permissions_data = {
-        "can_send_messages": True,
-        "can_send_photos": True,
-        "can_send_videos": True,
-        "can_send_audios": True,
-        "can_send_voice_notes": True,
-        "can_send_documents": True,
-        "can_send_video_notes": True,
-        "can_send_polls": True,
-        "can_send_other_messages": True,
-        "can_add_web_page_previews": True,
+        "can_send_messages": not locks.get("text", False),
+        "can_send_photos": not locks.get("photo", False),
+        "can_send_videos": not locks.get("video", False),
+        "can_send_audios": not locks.get("audio", False),
+        "can_send_voice_notes": not locks.get("voice", False),
+        "can_send_documents": not locks.get("document", False),
+        "can_send_video_notes": not locks.get("video_note", False),
+        "can_send_polls": not locks.get("poll", False),
+        "can_send_other_messages": not (
+            locks.get("gif", False)
+            or locks.get("sticker", False)
+            or locks.get("stickeranimated", False)
+            or locks.get("stickerpremium", False)
+            or locks.get("emoji", False)
+            or locks.get("game", False)
+        ),
+        "can_add_web_page_previews": not (
+            locks.get("url", False)
+            or locks.get("botlink", False)
+            or locks.get("invitelink", False)
+        ),
         "can_change_info": True,
         "can_invite_users": True,
         "can_pin_messages": True,
         "can_manage_topics": True,
     }
 
-
-    # Apply lock logic to the new dictionary
-    permissions_data["can_send_messages"] = not locks.get("text", False)
-    permissions_data["can_send_photos"] = not locks.get("photo", False)
-    permissions_data["can_send_videos"] = not locks.get("video", False)
-    permissions_data["can_send_audios"] = not locks.get("audio", False)
-    permissions_data["can_send_voice_notes"] = not locks.get("voice", False)
-    permissions_data["can_send_documents"] = not locks.get("document", False)
-    permissions_data["can_send_video_notes"] = not locks.get("video_note", False)
-    permissions_data["can_send_polls"] = not locks.get("poll", False)
-    permissions_data["can_send_other_messages"] = not (locks.get("emoji", False) or locks.get("sticker", False) or locks.get("gif", False))
-    permissions_data["can_add_web_page_previews"] = not locks.get("previews", False)
-
     permissions = ChatPermissions(**permissions_data)
 
     # Rebuild the keyboard with updated status
     reply_markup = _build_locks_keyboard(locks)
     await query.edit_message_text("🔧 Manage group locks:", reply_markup=reply_markup)
-    await query.answer(text="✅ Settings updated and applied!")
+
+    try:
+        await context.bot.set_chat_permissions(chat_id, permissions)
+    except Exception as e:
+        print(f"Failed to apply chat permissions for chat {chat_id}: {e}")
+        await query.answer("⚠️ Locks updated, but I couldn't apply chat permissions.", show_alert=True)
+    else:
+        await query.answer(text="✅ Settings updated and applied!")
 
 @admin_only
 @group_management_command_enabled_check("pin")

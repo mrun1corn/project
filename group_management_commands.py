@@ -71,6 +71,16 @@ def save_group_management_command_states():
 
 load_group_management_command_states()
 
+async def _is_authorized_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
+    if user_id == ADMIN_CHAT_ID:
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        return member.status in ("administrator", "creator")
+    except Exception as e:
+        print(f"Error checking admin status for user {user_id} in chat {chat_id}: {e}")
+        return False
+
 def check_group_management_command_enabled(chat_id: int, command: str) -> bool:
     chat_id_str = str(chat_id)
     if chat_id_str not in _all_group_management_command_states:
@@ -111,7 +121,7 @@ def _build_group_manage_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 
 async def group_manage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    if update.effective_user.id != ADMIN_CHAT_ID: # Directly use imported ADMIN_CHAT_ID
+    if not await _is_authorized_admin(context, chat_id, update.effective_user.id):
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
@@ -123,8 +133,8 @@ async def group_manage_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     chat_id = query.message.chat.id
-    if query.from_user.id != ADMIN_CHAT_ID:
-        await query.edit_message_text("❌ You are not authorized to change these settings.")
+    if not await _is_authorized_admin(context, chat_id, query.from_user.id):
+        await query.answer("❌ You are not authorized to change these settings.", show_alert=True)
         return
 
     data = query.data
