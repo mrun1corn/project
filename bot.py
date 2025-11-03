@@ -5,6 +5,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
 )
 from hello import bot_start, jaan
@@ -50,7 +51,8 @@ def main() -> None:
     register_note_handlers(application)
 
     # Global access guard (blocks unapproved users before other handlers run)
-    application.add_handler(MessageHandler(filters.ALL, enforce_user_access), group=-100)
+    application.add_handler(MessageHandler(filters.COMMAND, enforce_user_access), group=-100)
+    application.add_handler(CallbackQueryHandler(enforce_user_access), group=-100)
 
     # Register command handlers
     application.add_handler(CommandHandler("start", bot_start))
