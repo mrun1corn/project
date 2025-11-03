@@ -31,10 +31,12 @@ GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 REMOVE_BG_API_KEY=your_remove_bg_api_key   # optional
 MONGODB_URI=your_mongodb_connection_string
 MONGODB_DB_NAME=telegram_bot
-UPLOAD_TARGET=pixeldrain  # pixeldrain or gofile
+UPLOAD_TARGET=pixeldrain  # legacy default; optional when UPLOAD_TARGETS is set
+UPLOAD_TARGETS=pixeldrain,gofile  # comma-separated rotation list
 PIXELDRAIN_KEY=           # optional API key
 GOFILE_TOKEN=             # optional API token
 GOFILE_FOLDER_ID=
+GOFILE_UPLOAD_ENDPOINTS=  # optional comma separated upload hosts
 QBITTORRENT_HOST=http://localhost
 QBITTORRENT_PORT=8080
 QBITTORRENT_USERNAME=admin
@@ -128,8 +130,9 @@ For active/backup failover using Keepalived:
   - Reply to a Telegram document/audio/video/photo.
   - Or run `/mirror <direct-file-url>`.
   The file is downloaded locally, uploaded to PixelDrain or GoFile, and the
-  link is returned before the local copy is deleted. Configure the target with
-  `UPLOAD_TARGET`, and optionally provide API credentials for uploading into
+  link is returned before the local copy is deleted. Configure the targets with
+  `UPLOAD_TARGETS` (comma-separated rotation) or fall back to `UPLOAD_TARGET`,
+  and optionally provide API credentials for uploading into
   your own account/folder.
   Torrents and magnets are handled through qBittorrent; set `QBITTORRENT_*`
   variables to point at your Web UI. Progress messages are updated every few

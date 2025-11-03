@@ -5,8 +5,9 @@ import shutil
 import tempfile
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlparse, quote
 
 import aiohttp
@@ -25,6 +26,7 @@ from comm_checker import check_user_approval, check_command_enabled
 
 
 ALLOWED_TARGETS = {"pixeldrain", "gofile"}
+TARGET_LABELS = {"pixeldrain": "PixelDrain", "gofile": "GoFile"}
 STATUS_EMOJIS = {
     "queued": "🟡",
     "downloading": "⬇️",
@@ -33,6 +35,9 @@ STATUS_EMOJIS = {
     "completed": "✅",
     "error": "❌",
 }
+
+TARGET_QUEUE: Optional[Deque[str]] = None
+TARGET_QUEUE_LOCK = asyncio.Lock()
 
 
 def ensure_download_dir() -> str:
@@ -50,11 +55,52 @@ def ensure_download_dir() -> str:
         return fallback
 
 
-def _effective_target() -> str:
-    target = settings.upload_target or "pixeldrain"
-    if target not in ALLOWED_TARGETS:
-        return "gofile"
-    return target
+def _build_target_queue() -> Deque[str]:
+    configured = list(settings.upload_targets or ())
+    if not configured:
+        configured = [settings.upload_target or "pixeldrain"]
+
+    queue: list[str] = []
+    for candidate in configured:
+        normalized = candidate.lower()
+        if normalized not in ALLOWED_TARGETS:
+            continue
+        if normalized == "pixeldrain" and not settings.pixeldrain_key:
+            continue
+        queue.append(normalized)
+
+    if not queue:
+        if settings.pixeldrain_key:
+            queue.append("pixeldrain")
+        else:
+            queue.append("gofile")
+    elif not settings.upload_targets_defined:
+        if settings.pixeldrain_key and "pixeldrain" not in queue:
+            queue.append("pixeldrain")
+        if settings.gofile_token and "gofile" not in queue:
+            queue.append("gofile")
+
+    return deque(queue)
+
+
+async def _effective_target() -> str:
+    global TARGET_QUEUE
+    async with TARGET_QUEUE_LOCK:
+        if TARGET_QUEUE is None or not TARGET_QUEUE:
+            TARGET_QUEUE = _build_target_queue()
+        target = TARGET_QUEUE[0]
+        TARGET_QUEUE.rotate(-1)
+        return target
+
+
+async def _select_target_order() -> Tuple[str, ...]:
+    primary = await _effective_target()
+    available = list(_build_target_queue())
+    ordered = [primary]
+    for candidate in available:
+        if candidate not in ordered:
+            ordered.append(candidate)
+    return tuple(ordered)
 
 
 def _format_size(num: Optional[int]) -> str:
@@ -147,6 +193,7 @@ class MirrorTask:
     last_update: float = field(default_factory=lambda: 0.0)
     status_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     finished: bool = False
+    current_target: Optional[str] = None
 
     async def update_message(self, force: bool = False) -> None:
         async with self.status_lock:
@@ -173,6 +220,9 @@ class MirrorTask:
                     )
                 else:
                     lines.append(f"<b>Transferred:</b> {_format_size(self.downloaded_bytes)}")
+                if self.current_target and self.phase in {"uploading", "compressing"}:
+                    target_label = TARGET_LABELS.get(self.current_target, self.current_target)
+                    lines.append(f"<b>Target:</b> {html.escape(target_label)}")
                 lines.append(f"<b>Speed:</b> {_format_speed(self.speed)}")
                 if self.phase == "downloading" and self.total_bytes:
                     remaining = (
@@ -571,7 +621,8 @@ def _filename_from_response(url: str, response) -> str:
 
 
 async def _upload_to_target(task: MirrorTask, path: str) -> str:
-    target = _effective_target()
+    targets = await _select_target_order()
+    errors: list[str] = []
     upload_path = path
     cleanup_path = None
 
@@ -582,28 +633,45 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
         archive_base = os.path.join(os.path.dirname(path), f"{os.path.basename(path)}")
         upload_path = await asyncio.to_thread(shutil.make_archive, archive_base, "zip", path)
         cleanup_path = upload_path
-    task.phase = "uploading"
-    task.speed = None
-    task.progress = 0.0
-    task.downloaded_bytes = 0
     try:
-        task.total_bytes = os.path.getsize(upload_path)
-    except OSError:
-        pass
-    await task.update_message(force=True)
-    print(f"[MIRROR] Task {task.task_id} preparing upload file: {upload_path}")
+        for target in targets:
+            task.current_target = target
+            task.phase = "uploading"
+            task.speed = None
+            task.progress = 0.0
+            task.downloaded_bytes = 0
+            try:
+                task.total_bytes = os.path.getsize(upload_path)
+            except OSError:
+                pass
+            await task.update_message(force=True)
+            print(f"[MIRROR] Task {task.task_id} preparing upload file: {upload_path} (target={target})")
 
-    if target == "gofile":
-        link = await asyncio.to_thread(_upload_to_gofile, upload_path, os.path.basename(upload_path))
-        task.downloaded_bytes = task.total_bytes or task.downloaded_bytes
-        task.speed = None
-        await task.update_message(force=True)
-    else:
-        link = await _upload_to_pixeldrain_async(task, upload_path)
+            try:
+                if target == "gofile":
+                    link = await asyncio.to_thread(_upload_to_gofile, upload_path, os.path.basename(upload_path))
+                    task.downloaded_bytes = task.total_bytes or task.downloaded_bytes
+                    task.speed = None
+                    await task.update_message(force=True)
+                else:
+                    link = await _upload_to_pixeldrain_async(task, upload_path)
+            except Exception as exc:
+                error_message = f"{target}: {exc}"
+                errors.append(error_message)
+                print(f"[MIRROR] Task {task.task_id} upload failed via {target}: {exc}")
+                continue
+            if cleanup_path and os.path.exists(cleanup_path):
+                os.remove(cleanup_path)
+            return link
+    finally:
+        if cleanup_path and os.path.exists(cleanup_path):
+            try:
+                os.remove(cleanup_path)
+            except OSError:
+                pass
 
-    if cleanup_path and os.path.exists(cleanup_path):
-        os.remove(cleanup_path)
-    return link
+    detail = "; ".join(errors) if errors else "No upload targets available"
+    raise RuntimeError(f"All upload targets failed: {detail}")
 
 
 async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
@@ -655,21 +723,63 @@ async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
 
 
 def _upload_to_gofile(filepath: str, filename: str) -> str:
-    data = {}
-    if settings.gofile_token:
-        data["token"] = settings.gofile_token
-        if settings.gofile_folder_id:
-            data["folderId"] = settings.gofile_folder_id
-    with open(filepath, "rb") as f:
-        response = requests.post(
-            "https://upload.gofile.io/uploadfile",
-            files={"file": (filename, f)},
-            data=data,
-            timeout=1200,
-        )
-    response.raise_for_status()
-    payload = response.json().get("data") or {}
-    link = payload.get("downloadPage") or payload.get("directLink")
-    if not link:
-        raise ValueError("Invalid response from GoFile")
-    return link
+    if not settings.gofile_token:
+        raise ValueError("GoFile token not configured")
+
+    endpoints = settings.gofile_upload_endpoints or ("https://upload.gofile.io/uploadfile",)
+    errors: list[str] = []
+    folder_id = settings.gofile_folder_id.strip()
+
+    for endpoint in endpoints:
+        headers = {"Authorization": f"Bearer {settings.gofile_token}"}
+        data = {}
+        if folder_id:
+            data["folderId"] = folder_id
+
+        with open(filepath, "rb") as f:
+            files = {"file": (filename, f)}
+            try:
+                response = requests.post(
+                    endpoint,
+                    files=files,
+                    data=data or None,
+                    headers=headers,
+                    timeout=1200,
+                )
+            except requests.RequestException as exc:
+                error_message = f"request error: {exc}"
+                errors.append(f"{endpoint}: {error_message}")
+                print(f"[MIRROR] GoFile request error via {endpoint}: {exc}")
+                continue
+
+        if response.status_code >= 500:
+            errors.append(f"{endpoint}: {response.status_code} {response.text}")
+            print(f"[MIRROR] GoFile server error via {endpoint}: {response.status_code} {response.text}")
+            continue
+
+        if response.status_code == 401:
+            raise ValueError("GoFile authentication failed (401). Check API token.")
+
+        try:
+            json_payload = response.json()
+        except ValueError as exc:
+            errors.append(f"{endpoint}: non-JSON response {response.text}")
+            print(f"[MIRROR] GoFile non-JSON response via {endpoint}: {response.text}")
+            continue
+
+        status = (json_payload.get("status") or "").lower()
+        if status and status != "ok":
+            message = json_payload.get("message") or json_payload.get("error") or response.text
+            errors.append(f"{endpoint}: {status} {message}")
+            print(f"[MIRROR] GoFile API error via {endpoint}: {status} {message}")
+            continue
+
+        payload = json_payload.get("data") or {}
+        link = payload.get("downloadPage") or payload.get("directLink")
+        if link:
+            return link
+
+        errors.append(f"{endpoint}: missing link in response {json_payload}")
+        print(f"[MIRROR] GoFile missing link via {endpoint}: {json_payload}")
+
+    raise ValueError("GoFile upload failed: " + "; ".join(errors))
