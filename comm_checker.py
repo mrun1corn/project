@@ -3,6 +3,16 @@ from telegram.ext import ContextTypes
 import json
 from config import ADMIN_CHAT_ID
 from functools import wraps
+from command_registry import (
+    get_default_global_commands,
+    get_default_group_commands,
+    get_default_notes_commands,
+)
+
+GLOBAL_COMMAND_DEFAULTS = get_default_global_commands()
+GROUP_COMMAND_DEFAULTS = get_default_group_commands()
+NOTES_COMMAND_DEFAULTS = get_default_notes_commands()
+
 
 def is_admin(func):
     @wraps(func)
@@ -13,6 +23,7 @@ def is_admin(func):
         return await func(update, context, *args, **kwargs)
     return wrapper
 
+
 def load_command_states():
     try:
         with open('command_states.json', 'r') as f:
@@ -20,39 +31,30 @@ def load_command_states():
     except (FileNotFoundError, json.JSONDecodeError):
         loaded_states = {}
 
-    # Define all commands that can be enabled/disabled
-    # Initialize them to True if not already in loaded_states
-    default_commands = {
-        'shell': True,
-        'help': True,
-        'ai': True,
-        'speedtest': True,
-        'ping': True,
-        'reboot': True,
-        'music': True,
-        'video': True,
-        'reel': True,
-        'bgremove': True,
-        'store': True,
-        'getnote': True,
-        'listnotes': True,
-        'deletenote': True,
-        # Add any other commands you want to be toggleable here
-    }
+    merged_states = GLOBAL_COMMAND_DEFAULTS.copy()
+    for cmd, status in loaded_states.items():
+        if cmd in GLOBAL_COMMAND_DEFAULTS:
+            merged_states[cmd] = bool(status)
 
-    # Merge loaded states with default commands, ensuring all defaults are present
-    # and loaded states override defaults if they exist.
-    for cmd, default_status in default_commands.items():
-        if cmd not in loaded_states:
-            loaded_states[cmd] = default_status
-    
-    # Remove any commands from loaded_states that are no longer in default_commands
-    # This handles cases where commands are removed from the bot.
-    commands_to_remove = [cmd for cmd in loaded_states if cmd not in default_commands]
-    for cmd in commands_to_remove:
-        del loaded_states[cmd]
+    return merged_states
 
-    return loaded_states
+
+def _format_command_overview(include_status: bool = False) -> str:
+    lines = []
+    for command in sorted(GLOBAL_COMMAND_DEFAULTS):
+        default_status = GLOBAL_COMMAND_DEFAULTS[command]
+        current_status = command_states.get(command, default_status)
+        if include_status:
+            status = "Enabled" if current_status else "Disabled"
+            line = f"- {command}: {status}"
+        else:
+            line = f"- {command}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _format_simple_list(names) -> str:
+    return "\n".join(f"- {name}" for name in sorted(names))
 
 # Save command states to a JSON file
 def save_command_states(states):
@@ -86,11 +88,23 @@ approved_users = load_approved_users()
 async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Enable a command."""
     if not context.args:
-        await update.message.reply_text("Usage: /enable <command_name>")
+        overview = _format_command_overview()
+        group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
+        notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
+        message = (
+            "Usage: /enable <command_name>\n\n"
+            "Global commands:\n"
+            f"{overview}\n\n"
+            "Group commands (manage with /group_manage):\n"
+            f"{group_list}\n\n"
+            "Notes commands (manage with /notes_manage):\n"
+            f"{notes_list}"
+        )
+        await update.message.reply_text(message)
         return
 
     command = context.args[0].lower() # Convert to lower for consistency
-    if command in command_states:
+    if command in GLOBAL_COMMAND_DEFAULTS:
         if command_states[command]:
             await update.message.reply_text(f"{command} command is already enabled.")
         else:
@@ -98,17 +112,40 @@ async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             save_command_states(command_states)
             await update.message.reply_text(f"{command} command has been enabled.")
     else:
-        await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
+        overview = _format_command_overview()
+        group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
+        notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
+        await update.message.reply_text(
+            "Invalid command.\n\n"
+            "Global commands:\n"
+            f"{overview}\n\n"
+            "Group commands (manage with /group_manage):\n"
+            f"{group_list}\n\n"
+            "Notes commands (manage with /notes_manage):\n"
+            f"{notes_list}"
+        )
 
 @is_admin
 async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Disable a command."""
     if not context.args:
-        await update.message.reply_text("Usage: /disable <command_name>")
+        overview = _format_command_overview()
+        group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
+        notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
+        message = (
+            "Usage: /disable <command_name>\n\n"
+            "Global commands:\n"
+            f"{overview}\n\n"
+            "Group commands (manage with /group_manage):\n"
+            f"{group_list}\n\n"
+            "Notes commands (manage with /notes_manage):\n"
+            f"{notes_list}"
+        )
+        await update.message.reply_text(message)
         return
 
     command = context.args[0].lower() # Convert to lower for consistency
-    if command in command_states:
+    if command in GLOBAL_COMMAND_DEFAULTS:
         if not command_states[command]:
             await update.message.reply_text(f"{command} command is already disabled.")
         else:
@@ -116,7 +153,18 @@ async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             save_command_states(command_states)
             await update.message.reply_text(f"{command} command has been disabled.")
     else:
-        await update.message.reply_text("Invalid command. Available commands: " + ", ".join(command_states.keys()))
+        overview = _format_command_overview()
+        group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
+        notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
+        await update.message.reply_text(
+            "Invalid command.\n\n"
+            "Global commands:\n"
+            f"{overview}\n\n"
+            "Group commands (manage with /group_manage):\n"
+            f"{group_list}\n\n"
+            "Notes commands (manage with /notes_manage):\n"
+            f"{notes_list}"
+        )
 
 @is_admin
 async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -189,17 +237,18 @@ async def check_user_approval(user_id) -> bool:
 
 async def check_command_enabled(command: str) -> bool:
     """Check if a command is enabled."""
-    return command_states.get(command, True)  # Default to enabled if not found
+    if command not in GLOBAL_COMMAND_DEFAULTS:
+        return True
+    return command_states.get(command, GLOBAL_COMMAND_DEFAULTS[command])
 
 @is_admin
 async def list_commands_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lists the current status (enabled/disabled) of all toggleable commands."""
-    status_message = "📊 *Command Status:*\n\n"
+    status_message = "📊 Command Status:\n\n"
     if not command_states:
         status_message += "No commands found to manage."
     else:
-        for command, enabled in sorted(command_states.items()):
-            status = "✅ Enabled" if enabled else "❌ Disabled"
-            status_message += f"- `{command}`: {status}\n"
-    
-    await update.message.reply_text(status_message, parse_mode="Markdown")
+        status_message += _format_command_overview(include_status=True)
+
+    status_message += "\n\nℹ️ Use /group_manage or /notes_manage for chat-specific command controls."
+    await update.message.reply_text(status_message)

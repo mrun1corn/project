@@ -5,14 +5,10 @@ from telegram.ext import ContextTypes
 from functools import wraps
 from config import ADMIN_CHAT_ID
 from group_management import error_handler
+from command_registry import get_default_notes_commands
 
 # Define all commands that can be enabled/disabled in notes.py
-NOTES_COMMANDS = {
-    'keep': True,
-    'notes': True,
-    'delete': True,
-    'getnote': True, # This is handled by Regex filter, but we can still toggle its functionality
-}
+NOTES_COMMANDS = get_default_notes_commands()
 
 NOTES_STATES_FILE = 'notes_command_states.json'
 

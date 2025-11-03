@@ -4,32 +4,10 @@ from telegram.ext import ContextTypes
 from functools import wraps
 import json
 from config import ADMIN_CHAT_ID
+from command_registry import get_default_group_commands
 
 # Define all commands that can be enabled/disabled in group_management.py
-GROUP_MANAGEMENT_COMMANDS = {
-    'welcome': True,
-    'goodbye': True,
-    'filter': True,
-    'stop': True,
-    'mute': True,
-    'tmute': True,
-    'unmute': True,
-    'kick': True,
-    'ban': True,
-    'tban': True,
-    'unban': True,
-    'warn': True,
-    'warns': True,
-    'warnlimit': True,
-    'warnmode': True,
-    'locks': True,
-    'pin': True,
-    'action': True,
-    'promote': True,
-    'demote': True,
-    'permissions': True,
-    'tagadmin': True,
-}
+GROUP_MANAGEMENT_COMMANDS = get_default_group_commands()
 
 GROUP_MANAGEMENT_STATES_FILE = 'group_management_command_states.json'
 
@@ -71,16 +49,6 @@ def save_group_management_command_states():
 
 load_group_management_command_states()
 
-async def _is_authorized_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
-    if user_id == ADMIN_CHAT_ID:
-        return True
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        return member.status in ("administrator", "creator")
-    except Exception as e:
-        print(f"Error checking admin status for user {user_id} in chat {chat_id}: {e}")
-        return False
-
 def check_group_management_command_enabled(chat_id: int, command: str) -> bool:
     chat_id_str = str(chat_id)
     if chat_id_str not in _all_group_management_command_states:
@@ -121,7 +89,7 @@ def _build_group_manage_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 
 async def group_manage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    if not await _is_authorized_admin(context, chat_id, update.effective_user.id):
+    if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("❌ You are not authorized to use this command.")
         return
 
@@ -133,7 +101,7 @@ async def group_manage_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     chat_id = query.message.chat.id
-    if not await _is_authorized_admin(context, chat_id, query.from_user.id):
+    if query.from_user.id != ADMIN_CHAT_ID:
         await query.answer("❌ You are not authorized to change these settings.", show_alert=True)
         return
 

@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 import subprocess
 import os
 from config import ADMIN_CHAT_ID
+from comm_checker import command_states
 
 # Dictionary to hold the user's shell state including current directory
 user_shell_states = {}
@@ -19,6 +20,10 @@ async def start_shell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     if user_id != ADMIN_CHAT_ID:
         await update.message.reply_text("You do not have permission to use this command.")
+        return
+
+    if not command_states.get('shell', True):
+        await update.message.reply_text("❌ Shell command is currently disabled.")
         return
     
     # Initialize shell session with current working directory

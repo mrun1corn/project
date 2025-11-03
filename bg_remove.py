@@ -3,12 +3,16 @@ import os
 from telegram import Update
 from telegram.ext import ContextTypes
 from config import BOT_TOKEN, ADMIN_CHAT_ID  # Ensure your BOT_TOKEN, ADMIN_CHAT_ID, and other configurations are properly managed.
-from comm_checker import check_user_approval  # Import user approval checker
+from comm_checker import check_user_approval, command_states  # Import user approval checker
 
 REMOVE_BG_API_KEY = "B1L9Ed7WzQxrub2R5Y4vDLnC"  # Replace this with your API key
 
 async def remove_bg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+
+    if user_id != ADMIN_CHAT_ID and not command_states.get('bgremove', True):
+        await update.message.reply_text("❌ Background removal command is disabled.")
+        return
 
     # Allow admins to bypass approval checks
     if user_id != ADMIN_CHAT_ID and not await check_user_approval(user_id):
