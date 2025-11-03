@@ -252,6 +252,28 @@ async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if user.id == settings.admin_chat_id:
         return
+
+    is_command = False
+    if update.message:
+        message = update.message
+        if message.entities:
+            is_command = any(
+                entity.type == "bot_command" and entity.offset == 0 for entity in message.entities
+            )
+        if not is_command and message.caption_entities:
+            is_command = any(
+                entity.type == "bot_command" and entity.offset == 0 for entity in message.caption_entities
+            )
+        if not is_command and message.text:
+            is_command = message.text.strip().startswith("/")
+        if not is_command and message.caption:
+            is_command = message.caption.strip().startswith("/")
+    elif update.callback_query:
+        is_command = True
+
+    if not is_command:
+        return
+
     if await check_user_approval(user.id):
         return
 
