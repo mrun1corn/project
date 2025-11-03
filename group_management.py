@@ -1,5 +1,3 @@
-import os
-import json
 import time
 from asyncio import sleep
 from telegram import Update, ChatPermissions, ChatAdministratorRights, InlineKeyboardButton, InlineKeyboardMarkup
@@ -87,8 +85,10 @@ def bot_has_permissions(permissions: list[str]):
         return wrapped
     return decorator
 
-GROUP_DATA_DIR = 'group_data'
-os.makedirs(GROUP_DATA_DIR, exist_ok=True)
+from settings import settings
+from database import get_collection
+
+GROUPS_COLLECTION = get_collection("group_data")
 
 # Canonical lock keys used across storage, UI, and enforcement.
 LOCKABLE_TYPES = [
@@ -156,10 +156,7 @@ LOCK_KEY_ALIASES = {
     "invitelinks": "invitelink",
 }
 
-_group_cache = {}
-
-def _group_file(chat_id):
-    return os.path.join(GROUP_DATA_DIR, f"{chat_id}.json")
+_group_cache: dict[int, dict] = {}
 
 def _normalize_locks(raw_locks: dict) -> dict:
     """Normalize lock keys coming from disk to the canonical list."""
@@ -173,43 +170,40 @@ def _normalize_locks(raw_locks: dict) -> dict:
             normalized[canonical] = bool(value)
     return normalized
 
-def load_group(chat_id):
+DEFAULT_GROUP_DATA = {
+    'welcome': None,
+    'goodbye': None,
+    'welcome_mention': True,
+    'goodbye_mention': True,
+    'filters': {},
+    'warn_counts': {},
+    'warn_limit': 3,
+    'warn_mode': 'mute',
+    'locks': {},
+    'action_delete': True,
+    'members': {}
+}
+
+
+async def load_group(chat_id: int) -> dict:
     if chat_id in _group_cache:
         return _group_cache[chat_id]
 
-    path = _group_file(chat_id)
-    group_data = {
-        'welcome': None,
-        'goodbye': None,
-        'welcome_mention': True,
-        'goodbye_mention': True,
-        'filters': {},
-        'warn_counts': {},
-        'warn_limit': 3,
-        'warn_mode': 'mute',
-        'locks': {},
-        'action_delete': True,
-        'members': {}
-    }
-    try:
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                loaded_data = json.load(f)
-                group_data.update(loaded_data) # Update default data with loaded data
-    except (IOError, json.JSONDecodeError) as e:
-        print(f"Error loading group data for chat {chat_id}: {e}")
+    doc = await GROUPS_COLLECTION.find_one({"_id": chat_id})
+    group_data = DEFAULT_GROUP_DATA.copy()
+    if doc:
+        doc_data = {k: v for k, v in doc.items() if k != "_id"}
+        group_data.update(doc_data)
     group_data['locks'] = _normalize_locks(group_data.get('locks', {}))
-    
+
     _group_cache[chat_id] = group_data
     return group_data
 
-def save_group(chat_id, data):
-    _group_cache[chat_id] = data # Update cache
-    try:
-        with open(_group_file(chat_id), 'w') as f:
-            json.dump(data, f, indent=4)
-    except IOError as e:
-        pass
+
+async def save_group(chat_id: int, data: dict) -> None:
+    _group_cache[chat_id] = data
+    to_store = data.copy()
+    await GROUPS_COLLECTION.update_one({"_id": chat_id}, {"$set": to_store}, upsert=True)
 
 _admin_cache = {}
 _ADMIN_CACHE_TIMEOUT = 60 # seconds
@@ -274,7 +268,7 @@ def parse_time(time_str: str) -> int:
 @error_handler
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
 
     if not context.args:
         await update.message.reply_text(f"Welcome message:\n{group['welcome'] or '❌ Disabled'}")
@@ -288,7 +282,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group['welcome'] = arg
         await update.message.reply_text(f"✅ Welcome message set to:\n{arg}")
 
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
 
 
 @admin_only
@@ -296,7 +290,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
 
     if not context.args:
         await update.message.reply_text(f"Goodbye message:\n{group['goodbye'] or '❌ Disabled'}")
@@ -310,7 +304,7 @@ async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group['goodbye'] = arg
         await update.message.reply_text(f"✅ Goodbye message set to:\n{arg}")
 
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
 
 
 
@@ -324,13 +318,13 @@ async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     chat_id = query.message.chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     
     _, type, choice = query.data.split('_')
     
     mention_enabled = choice == 'yes'
     group[f'{type}_mention'] = mention_enabled
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
     
     await query.edit_message_text(f"✅ User mentions for {type} message have been {'enabled' if mention_enabled else 'disabled'}.")
 
@@ -347,7 +341,7 @@ def _format_member_message(msg: str, member, chat_title: str) -> str:
 @error_handler
 async def member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
 
     msg = group.get("welcome")
     if not msg:
@@ -365,7 +359,7 @@ async def member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
 
     msg = group.get("goodbye")
     if not msg:
@@ -383,7 +377,7 @@ async def member_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def service_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import asyncio
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     
     # Only proceed if auto-deletion is enabled for the group
     if not group.get('action_delete', True) or not update.effective_message:
@@ -411,11 +405,11 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text(USAGE_FILTER_MSG)
         return
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     trigger = context.args[0].lower()
     reply = " ".join(context.args[1:])
     group['filters'][trigger] = reply
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
     await update.message.reply_text(f"✅ Filter added for '{trigger}'")
 
 @admin_only
@@ -427,10 +421,10 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(USAGE_STOP_MSG)
         return
     trigger = context.args[0].lower()
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     if trigger in group['filters']:
         del group['filters'][trigger]
-        save_group(chat_id, group)
+        await save_group(chat_id, group)
         await update.message.reply_text(f"✅ Filter '{trigger}' removed")
     else:
         await update.message.reply_text("❌ Filter not found.")
@@ -467,7 +461,7 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_user_admin(context, chat_id, user_id):
         return
 
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     locks = group.get("locks", {})
 
     should_delete = False
@@ -584,7 +578,7 @@ async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = update.effective_chat.id
     text = update.message.text.lower()
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     for trigger, reply in group.get("filters", {}).items():
         if trigger in text:
             await update.message.reply_text(reply)
@@ -816,7 +810,7 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(NO_ADMIN_WARN_MSG)
         return
 
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     
     warn_counts = group.setdefault('warn_counts', {})
     user_id_str = str(target_user.id)
@@ -846,7 +840,7 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await mute(update, context)
         warn_counts[user_id_str] = 0 # Reset warnings
 
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
 
 @admin_only
 @group_management_command_enabled_check("warns")
@@ -858,7 +852,7 @@ async def warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     chat_id = update.effective_chat.id
     target_user = update.message.reply_to_message.from_user
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     
     count = group.get('warn_counts', {}).get(str(target_user.id), 0)
     await update.message.reply_text(
@@ -874,9 +868,9 @@ async def set_warn_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(USAGE_WARN_LIMIT_MSG)
         return
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     group['warn_limit'] = int(context.args[0])
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
     await update.message.reply_text(f"✅ Warning limit set to {context.args[0]}.")
 
 @admin_only
@@ -887,9 +881,9 @@ async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(USAGE_WARN_MODE_MSG)
         return
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     group['warn_mode'] = context.args[0].lower()
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
     await update.message.reply_text(f"✅ Warning mode set to {context.args[0].lower()}.")
 
 
@@ -919,7 +913,7 @@ def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
 @error_handler
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     locks = group.setdefault("locks", {})
     for key in LOCKABLE_TYPES:
         locks.setdefault(key, False)
@@ -942,7 +936,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No need for another answer, just return
         return
 
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     locks = group.setdefault("locks", {})
     for key in LOCKABLE_TYPES:
         locks.setdefault(key, False)
@@ -973,7 +967,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(text="No changes were made.")
         return
 
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
 
     # Apply permissions to the chat
     permissions_data = {
@@ -1051,7 +1045,7 @@ async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 async def action_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     current_state = group.get('action_delete', True)
 
     keyboard = InlineKeyboardMarkup([
@@ -1074,11 +1068,11 @@ async def action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     chat_id = query.message.chat.id
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     
     new_state = query.data == "action_set_on"
     group['action_delete'] = new_state
-    save_group(chat_id, group)
+    await save_group(chat_id, group)
     
     status = "ON" if new_state else "OFF"
     await query.edit_message_text(f"✅ Service message auto-deletion is now **{status}**.", parse_mode="Markdown")
@@ -1314,7 +1308,7 @@ async def update_member_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     chat_id = update.effective_chat.id
     user = update.message.from_user
-    group = load_group(chat_id)
+    group = await load_group(chat_id)
     members = group.setdefault('members', {})
     members[str(user.id)] = user.username or user.first_name
     # Removed save_group here to prevent excessive disk I/O.

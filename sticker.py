@@ -6,8 +6,8 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError, BadRequest
 from PIL import Image
 import aiofiles
-from config import ADMIN_CHAT_ID
-from comm_checker import command_states
+from settings import settings
+from comm_checker import check_command_enabled
 
 def escape_markdown_v2(text: str) -> str:
     """Escape reserved characters for Telegram MarkdownV2."""
@@ -71,7 +71,7 @@ async def kang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     bot_username = bot.username.lstrip('@').lower()
 
-    if user.id != ADMIN_CHAT_ID and not command_states.get('kang', True):
+    if user.id != settings.admin_chat_id and not await check_command_enabled('kang'):
         await msg.reply_text(
             escape_markdown_v2("❌ Kang command is disabled."),
             parse_mode="MarkdownV2"

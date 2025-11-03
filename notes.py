@@ -1,42 +1,28 @@
-import os
-import json
-import fcntl  # For file locking on Unix-like systems
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
-from functools import wraps
 from group_management import error_handler, admin_only, is_user_admin # Import is_user_admin
 from notes_commands import notes_command_enabled_check, notes_manage_command, notes_manage_callback
+from database import get_collection
 
-NOTES_DIR = "notes"
-os.makedirs(NOTES_DIR, exist_ok=True)
+NOTES_COLLECTION = get_collection("notes")
 
-def get_notes_path(chat):
-    return os.path.join(NOTES_DIR, f"chat_{chat.id}.json")
-
-def load_notes(chat):
-    path = get_notes_path(chat)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-            notes = json.load(f)
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-            return notes
-    except (json.JSONDecodeError, FileNotFoundError):
+async def load_notes(chat_id: int) -> dict:
+    doc = await NOTES_COLLECTION.find_one({"_id": chat_id})
+    if not doc:
         return {"group_notes": {}, "user_notes": {}}
-    except Exception:
-        return {"group_notes": {}, "user_notes": {}}
+    data = {k: v for k, v in doc.items() if k != "_id"}
+    data.setdefault("group_notes", {})
+    data.setdefault("user_notes", {})
+    return data
 
-def save_notes(chat, notes):
-    path = get_notes_path(chat)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            json.dump(notes, f, indent=2, ensure_ascii=False)
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-    except Exception:
-        pass
+
+async def save_notes(chat_id: int, notes: dict) -> None:
+    await NOTES_COLLECTION.update_one(
+        {"_id": chat_id},
+        {"$set": notes},
+        upsert=True,
+    )
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -77,16 +63,17 @@ async def keep_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text and name:
-        notes = load_notes(update.effective_chat)
+        chat_id = update.effective_chat.id
+        notes = await load_notes(chat_id)
         user_id = str(update.effective_user.id)
 
-        target = notes["user_notes"].setdefault(user_id, {}) if update.effective_chat.type == "private" else notes["group_notes"]
+        target = notes.setdefault("user_notes", {}).setdefault(user_id, {}) if update.effective_chat.type == "private" else notes.setdefault("group_notes", {})
         target[name] = {
             "text": text,
             "creator": user_id,
             "created_at": update.message.date.isoformat()
         }
-        save_notes(update.effective_chat, notes)
+        await save_notes(chat_id, notes)
         note_type = "private" if update.effective_chat.type == "private" else "group"
         await update.message.reply_text(f"✅ Saved {note_type} note *{name}*", parse_mode=ParseMode.MARKDOWN)
     else:
@@ -95,7 +82,7 @@ async def keep_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @error_handler
 @notes_command_enabled_check("notes")
 async def show_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    notes = load_notes(update.effective_chat)
+    notes = await load_notes(update.effective_chat.id)
     user_id = str(update.effective_user.id)
     lines = ["Available notes:"]
 
@@ -125,7 +112,7 @@ async def get_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please provide a notename after the #, e.g., #notename")
         return
 
-    notes = load_notes(update.effective_chat)
+    notes = await load_notes(update.effective_chat.id)
     user_id = str(update.effective_user.id)
 
     if update.effective_chat.type == "private":
@@ -150,7 +137,7 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     name = context.args[0]
-    notes = load_notes(update.effective_chat)
+    notes = await load_notes(update.effective_chat.id)
     user_id = str(update.effective_user.id)
     deleted = False
 
@@ -169,7 +156,7 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
             deleted = True
 
     if deleted:
-        save_notes(update.effective_chat, notes)
+        await save_notes(update.effective_chat.id, notes)
         await update.message.reply_text(f"🗑️ Deleted note *{name}*", parse_mode=ParseMode.MARKDOWN)
     else:
         await update.message.reply_text(f"Note *{name}* not found or you don't have permission", parse_mode=ParseMode.MARKDOWN)

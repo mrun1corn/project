@@ -8,7 +8,7 @@ import uuid
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import RetryAfter, TimedOut
-from comm_checker import command_states, check_user_approval
+from comm_checker import check_user_approval, check_command_enabled
 
 # Semaphores to limit concurrent downloads and uploads
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(10)
@@ -68,7 +68,7 @@ async def _perform_initial_checks(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ You are not approved to use this command.")
         return False
 
-    if not command_states[command_name]:
+    if not await check_command_enabled(command_name):
         await update.message.reply_text(f"❌ The {command_name} command is currently disabled.")
         return False
 

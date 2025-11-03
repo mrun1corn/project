@@ -13,3 +13,5 @@ pymupdf
 Pillow 
 pytesseract
 google-generativeai
+python-dotenv
+motor

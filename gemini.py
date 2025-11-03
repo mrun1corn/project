@@ -10,21 +10,14 @@ import html
 from telegram import Update
 from telegram.ext import ContextTypes, Application, CommandHandler
 from telegram.error import BadRequest
-
-# Import necessary configurations from config.py
-try:
-    from config import ADMIN_CHAT_ID, GEMINI_API_KEY, BOT_TOKEN
-except ImportError:
-    ADMIN_CHAT_ID = 0
-    GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_IS_MISSING"
-    BOT_TOKEN = "YOUR_BOT_TOKEN_IS_MISSING"
+from settings import settings
 
 
 # --- Mock for comm_checker (replace with your actual implementation) ---
-from comm_checker import check_user_approval, command_states, check_command_enabled
+from comm_checker import check_user_approval, check_command_enabled
 
 # --- Constants ---
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={settings.gemini_api_key}"
 CONTEXT_FILE = "user_context.json"
 # CONTEXT_HISTORY_LIMIT = 5 # This will now be managed by token count or number of turns
 MAX_MESSAGE_LENGTH = 4096
@@ -399,4 +392,3 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def register_gemini_handlers(application):
     """Registers the /ai command handler with the Telegram Bot Application."""
     application.add_handler(CommandHandler("ai", ai_command))
-

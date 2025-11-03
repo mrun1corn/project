@@ -13,7 +13,7 @@ from help import register_help_handlers
 from systemstatus import bot_status, system_status, speedtest, ping, reboot
 from comm_checker import enable_command, disable_command, approve_user, revoke_user, list_commands_status
 from player import play_audio, play_video
-from config import BOT_TOKEN, ADMIN_CHAT_ID
+from settings import settings
 from shell import register_shell_handlers
 from bg_remove import remove_bg
 from gemini import ai_command
@@ -25,16 +25,21 @@ from notes import register_note_handlers
 async def post_init(application):
     try:
         await application.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
+            chat_id=settings.admin_chat_id,
             text="🤖 Bot has started and is now online."
         )
     except Exception as e:
         print(f"Failed to send startup message to admin: {e}")
 
 def main() -> None:
+    if not settings.bot_token:
+        raise RuntimeError("BOT_TOKEN is not configured. Set it in your environment or .env file.")
+    if not settings.admin_chat_id:
+        print("⚠️  ADMIN_CHAT_ID is not configured. Admin notifications and approvals may not work as expected.")
+
     application = (
         ApplicationBuilder()
-        .token(BOT_TOKEN)
+        .token(settings.bot_token)
         .concurrent_updates(True)
         .connection_pool_size(20)
         .build()

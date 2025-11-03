@@ -2,8 +2,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import subprocess
 import os
-from config import ADMIN_CHAT_ID
-from comm_checker import command_states
+from settings import settings
+from comm_checker import check_command_enabled
 
 # Dictionary to hold the user's shell state including current directory
 user_shell_states = {}
@@ -18,11 +18,10 @@ async def start_shell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Start an interactive shell session."""
     user_id = update.effective_user.id
     
-    if user_id != ADMIN_CHAT_ID:
+    if user_id != settings.admin_chat_id:
         await update.message.reply_text("You do not have permission to use this command.")
         return
-
-    if not command_states.get('shell', True):
+    if not await check_command_enabled('shell'):
         await update.message.reply_text("❌ Shell command is currently disabled.")
         return
     

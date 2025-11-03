@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
-from config import ADMIN_CHAT_ID
-from comm_checker import command_states
+from settings import settings
+from comm_checker import check_command_enabled
 
 HELP_TOPICS = {
     "note_usage": {
@@ -94,7 +94,7 @@ def get_resized_keyboard(commands, commands_per_row=3):
     return InlineKeyboardMarkup(buttons)
 
 async def help_command(update: Update, context: ContextTypes):
-    if update.effective_user.id != ADMIN_CHAT_ID and not command_states.get('help', True):
+    if update.effective_user.id != settings.admin_chat_id and not await check_command_enabled('help'):
         await update.message.reply_text("❌ Help command is disabled.")
         return
 

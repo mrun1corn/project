@@ -8,6 +8,7 @@ import asyncio
 import subprocess
 from telegram import Update
 from telegram.ext import ContextTypes
+from comm_checker import check_user_approval, check_command_enabled
 
 DOWNLOAD_DIR = 'downloads'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -83,13 +84,11 @@ async def download_with_ytdlp(url, output_path):
 
 
 async def _perform_initial_checks(update: Update, command_name: str) -> bool:
-    from comm_checker import check_user_approval, command_states  # Delayed import
-
     if not await check_user_approval(update.effective_user.id):
         await update.message.reply_text("You are not approved to use this feature.")
         return False
 
-    if not command_states.get(command_name, True):
+    if not await check_command_enabled(command_name):
         await update.message.reply_text(f"{command_name.capitalize()} download is disabled.")
         return False
     return True

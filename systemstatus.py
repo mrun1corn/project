@@ -8,8 +8,8 @@ import os
 import sys
 import platform
 import re
-from comm_checker import command_states, check_user_approval
-from config import ADMIN_CHAT_ID
+from comm_checker import check_user_approval, check_command_enabled
+from settings import settings
 
 # Global variable to track bot uptime
 bot_start_time = time.time()
@@ -102,7 +102,7 @@ async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🔒 You are not approved to use this command.")
         return
         
-    if not command_states.get('speedtest', True) and update.effective_user.id != ADMIN_CHAT_ID:
+    if not await check_command_enabled('speedtest') and update.effective_user.id != settings.admin_chat_id:
         await update.message.reply_text("❌ Speedtest command is disabled.")
         return
 
@@ -135,7 +135,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🔒 You are not approved to use this command.")
         return
         
-    if not command_states.get('ping', True) and update.effective_user.id != ADMIN_CHAT_ID:
+    if not await check_command_enabled('ping') and update.effective_user.id != settings.admin_chat_id:
         await update.message.reply_text("❌ Ping command is disabled.")
         return
 
@@ -168,11 +168,11 @@ async def reboot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Safely reboot the bot with admin checks."""
     user_id = update.effective_user.id
     
-    if user_id != ADMIN_CHAT_ID:
+    if user_id != settings.admin_chat_id:
         await update.message.reply_text("🔒 Admin permission required.")
         return
         
-    if not command_states.get('reboot', True):
+    if not await check_command_enabled('reboot'):
         await update.message.reply_text("❌ Reboot command is disabled.")
         return
 
