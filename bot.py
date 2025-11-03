@@ -11,7 +11,7 @@ from hello import bot_start, jaan
 from subcal import subnet
 from help import register_help_handlers
 from systemstatus import bot_status, system_status, speedtest, ping, reboot
-from comm_checker import enable_command, disable_command, approve_user, revoke_user, list_commands_status
+from comm_checker import enable_command, disable_command, approve_user, revoke_user, list_commands_status, enforce_user_access
 from player import play_audio, play_video
 from settings import settings
 from shell import register_shell_handlers
@@ -47,6 +47,9 @@ def main() -> None:
 
     # Register notes handlers first to ensure high priority for #notename messages
     register_note_handlers(application)
+
+    # Global access guard (blocks unapproved users before other handlers run)
+    application.add_handler(MessageHandler(filters.ALL, enforce_user_access), group=-100)
 
     # Register command handlers
     application.add_handler(CommandHandler("start", bot_start))

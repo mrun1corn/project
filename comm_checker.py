@@ -1,7 +1,7 @@
 from functools import wraps
 from typing import Dict, Tuple, Set
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ApplicationHandlerStop
 from settings import settings
 from command_registry import (
     get_default_global_commands,
@@ -243,6 +243,24 @@ async def check_user_approval(user_id: int) -> bool:
         return True
     _, approved = await _ensure_config()
     return user_id in approved
+
+
+async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Block unapproved users from interacting with the bot."""
+    user = update.effective_user
+    if not user:
+        return
+    if user.id == settings.admin_chat_id:
+        return
+    if await check_user_approval(user.id):
+        return
+
+    if update.callback_query:
+        await update.callback_query.answer("❌ You are not approved to use this bot.", show_alert=True)
+    elif update.message:
+        await update.message.reply_text("❌ You are not approved to use this bot.")
+
+    raise ApplicationHandlerStop
 
 
 async def check_command_enabled(command: str) -> bool:
