@@ -15,6 +15,7 @@ _GLOBAL_COMMANDS: dict[str, bool] = {
     "bgremove": True,
     "help": True,
     "kang": True,
+    "mirror": True,
     "music": True,
     "ping": True,
     "reboot": True,

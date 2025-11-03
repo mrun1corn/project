@@ -40,7 +40,8 @@ HELP_TOPICS = {
         "subcommands": {
             "music": "🎵 Usage: `/music <name>`\nStreams music with the given name.",
             "video": "🎥 Usage: `/video <name>`\nStreams video with the given name.",
-            "bgremove": "🖼️ Removes the background from an uploaded photo."
+            "bgremove": "🖼️ Removes the background from an uploaded photo.",
+            "mirror": "🪞 Usage: `/mirror` (reply to media or provide a URL).\nDownloads locally, uploads to the configured target (PixelDrain/GoFile), and returns the shareable link. Torrents and magnets are supported."
         }
     },
     "ai": {

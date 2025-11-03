@@ -31,6 +31,17 @@ GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 REMOVE_BG_API_KEY=your_remove_bg_api_key   # optional
 MONGODB_URI=your_mongodb_connection_string
 MONGODB_DB_NAME=telegram_bot
+UPLOAD_TARGET=pixeldrain  # pixeldrain or gofile
+PIXELDRAIN_KEY=           # optional API key
+GOFILE_TOKEN=             # optional API token
+GOFILE_FOLDER_ID=
+QBITTORRENT_HOST=http://localhost
+QBITTORRENT_PORT=8080
+QBITTORRENT_USERNAME=admin
+QBITTORRENT_PASSWORD=adminadmin
+QBITTORRENT_CATEGORY=
+MIRROR_STATUS_INTERVAL=5
+MIRROR_DOWNLOAD_DIR=downloads/mirror
 ```
 
 > **Security Tip:** Always keep these secret values outside of version control. If credentials have ever been exposed, rotate them immediately and update this file with placeholders only.
@@ -110,9 +121,19 @@ For active/backup failover using Keepalived:
   ```
 
 - Update approved users via bot commands:
-  - `/approve` (reply to user or /approve <user_id>)
-  - `/revoke`
-  - `/listcommands` to see toggled commands.
+- `/approve` (reply to user or /approve <user_id>)
+- `/revoke`
+- `/listcommands` (admin): view toggle states for global commands via `/enable`/`/disable`.
+- `/mirror` mirrors media in two ways:
+  - Reply to a Telegram document/audio/video/photo.
+  - Or run `/mirror <direct-file-url>`.
+  The file is downloaded locally, uploaded to PixelDrain or GoFile, and the
+  link is returned before the local copy is deleted. Configure the target with
+  `UPLOAD_TARGET`, and optionally provide API credentials for uploading into
+  your own account/folder.
+  Torrents and magnets are handled through qBittorrent; set `QBITTORRENT_*`
+  variables to point at your Web UI. Progress messages are updated every few
+  seconds (`MIRROR_STATUS_INTERVAL`).
 
 ## 9. Maintenance Tips
 
