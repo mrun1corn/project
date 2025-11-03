@@ -6,6 +6,7 @@ from telegram import Update, ChatPermissions, ChatAdministratorRights, InlineKey
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from functools import wraps
 from group_management_commands import group_management_command_enabled_check, group_manage_command, group_manage_callback
 
@@ -44,6 +45,18 @@ def error_handler(func):
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         try:
             return await func(update, context, *args, **kwargs)
+        except BadRequest as e:
+            error_text = str(e)
+            print(f"Telegram error in {func.__name__}: {error_text}")
+            if "chat_admin_required" in error_text.lower():
+                friendly = "❌ I need to be an admin with the necessary permissions to do that. Please promote me and try again."
+            else:
+                friendly = f"❌ Telegram error: {error_text}"
+
+            if update.message:
+                await update.message.reply_text(friendly)
+            elif update.callback_query:
+                await update.callback_query.answer(friendly, show_alert=True)
         except Exception as e:
             print(f"Error in {func.__name__}: {e}")
             if update.message:
@@ -583,6 +596,7 @@ async def filter_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("mute")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -605,6 +619,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("tmute")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -635,6 +650,7 @@ async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("unmute")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -650,6 +666,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("kick")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -669,6 +686,7 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("ban")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -687,6 +705,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("tban")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -712,6 +731,7 @@ async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 @group_management_command_enabled_check("unban")
+@bot_has_permissions(["can_restrict_members"])
 @error_handler
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -895,7 +915,7 @@ def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
 
 @admin_only
 @group_management_command_enabled_check("locks")
-@bot_has_permissions(["can_change_info"])
+@bot_has_permissions(["can_change_info", "can_restrict_members"])
 @error_handler
 async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -1155,7 +1175,13 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.promote_chat_member(
         chat_id=chat_id, user_id=user_id, **promotable_rights
     )
-    await context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
+    try:
+        await context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
+    except BadRequest as e:
+        if "not enough rights" in str(e).lower():
+            await update.message.reply_text("❌ Promoted, but I cannot set custom titles. Grant me the ability to manage chat info.")
+        else:
+            raise
     await update.message.reply_text(f"✅ Promoted with title: {custom_title}")
 
 def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) -> InlineKeyboardMarkup:
