@@ -29,6 +29,18 @@
             "notes": true,
             "delete": true,
             "getnote": true
+        },
+        "-1001348434902": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
+        },
+        "-1002424508917": {
+            "keep": true,
+            "notes": true,
+            "delete": true,
+            "getnote": true
         }
     }
 }
