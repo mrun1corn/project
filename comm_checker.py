@@ -42,7 +42,14 @@ async def _ensure_config() -> Tuple[Dict[str, bool], Set[int]]:
     merged_states = GLOBAL_COMMAND_DEFAULTS.copy()
     merged_states.update({k: bool(v) for k, v in stored_states.items() if k in GLOBAL_COMMAND_DEFAULTS})
 
-    approved_users = set(doc.get("approved_users", []))
+    raw_approved_users = doc.get("approved_users", [])
+    approved_users: Set[int] = set()
+    for value in raw_approved_users:
+        try:
+            approved_users.add(int(value))
+        except (TypeError, ValueError):
+            # Skip entries that can't be coerced to an integer (legacy data or corruption)
+            continue
 
     if doc.get("_id") is None:
         await CONFIG_COLLECTION.insert_one(
@@ -71,6 +78,7 @@ async def _set_command_state(command: str, enabled: bool) -> None:
 
 
 async def _add_approved_user(user_id: int) -> None:
+    user_id = int(user_id)
     states, approved = await _ensure_config()
     approved.add(user_id)
     await CONFIG_COLLECTION.update_one(
@@ -81,6 +89,7 @@ async def _add_approved_user(user_id: int) -> None:
 
 
 async def _remove_approved_user(user_id: int) -> None:
+    user_id = int(user_id)
     states, approved = await _ensure_config()
     approved.discard(user_id)
     await CONFIG_COLLECTION.update_one(
@@ -239,6 +248,11 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def check_user_approval(user_id: int) -> bool:
     """Check if a user is approved before allowing commands."""
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False
+
     if user_id == settings.admin_chat_id:
         return True
     _, approved = await _ensure_config()
