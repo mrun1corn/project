@@ -1,14 +1,16 @@
-from functools import wraps
-from typing import Dict, Tuple, Set
+﻿from functools import wraps
+from typing import Dict, Set
+
 from telegram import Update
-from telegram.ext import ContextTypes, ApplicationHandlerStop
-from settings import settings
+from telegram.ext import ApplicationHandlerStop, ContextTypes
+
 from command_registry import (
     get_default_global_commands,
     get_default_group_commands,
     get_default_notes_commands,
 )
 from database import get_collection
+from settings import settings
 
 
 GLOBAL_COMMAND_DEFAULTS = get_default_global_commands()
@@ -20,83 +22,103 @@ CONFIG_ID = "global"
 
 _command_states_cache: Dict[str, bool] | None = None
 _approved_users_cache: Set[int] | None = None
+_config_backend_error: str | None = None
 
 
 def is_admin(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         if update.effective_user.id != settings.admin_chat_id:
-            await update.message.reply_text("You do not have permission to use this command.")
+            await update.message.reply_text("🔒 You do not have permission to use this command.")
             return
         return await func(update, context, *args, **kwargs)
+
     return wrapper
 
 
-async def _ensure_config() -> Tuple[Dict[str, bool], Set[int]]:
-    global _command_states_cache, _approved_users_cache
+async def _ensure_config() -> tuple[Dict[str, bool], Set[int]]:
+    global _command_states_cache, _approved_users_cache, _config_backend_error
     if _command_states_cache is not None and _approved_users_cache is not None:
         return _command_states_cache, _approved_users_cache
 
-    doc = await CONFIG_COLLECTION.find_one({"_id": CONFIG_ID}) or {}
-    stored_states = doc.get("command_states", {})
-    merged_states = GLOBAL_COMMAND_DEFAULTS.copy()
-    merged_states.update({k: bool(v) for k, v in stored_states.items() if k in GLOBAL_COMMAND_DEFAULTS})
+    try:
+        doc = await CONFIG_COLLECTION.find_one({"_id": CONFIG_ID}) or {}
+        stored_states = doc.get("command_states", {})
+        merged_states = GLOBAL_COMMAND_DEFAULTS.copy()
+        merged_states.update({k: bool(v) for k, v in stored_states.items() if k in GLOBAL_COMMAND_DEFAULTS})
 
-    raw_approved_users = doc.get("approved_users", [])
-    approved_users: Set[int] = set()
-    for value in raw_approved_users:
-        try:
-            approved_users.add(int(value))
-        except (TypeError, ValueError):
-            # Skip entries that can't be coerced to an integer (legacy data or corruption)
-            continue
+        raw_approved_users = doc.get("approved_users", [])
+        approved_users: Set[int] = set()
+        for value in raw_approved_users:
+            try:
+                approved_users.add(int(value))
+            except (TypeError, ValueError):
+                continue
 
-    if doc.get("_id") is None:
-        await CONFIG_COLLECTION.insert_one(
-            {"_id": CONFIG_ID, "command_states": merged_states, "approved_users": list(approved_users)}
-        )
-    else:
-        await CONFIG_COLLECTION.update_one(
-            {"_id": CONFIG_ID},
-            {"$set": {"command_states": merged_states, "approved_users": list(approved_users)}},
-            upsert=True,
-        )
+        if doc.get("_id") is None:
+            await CONFIG_COLLECTION.insert_one(
+                {"_id": CONFIG_ID, "command_states": merged_states, "approved_users": list(approved_users)}
+            )
+        else:
+            await CONFIG_COLLECTION.update_one(
+                {"_id": CONFIG_ID},
+                {"$set": {"command_states": merged_states, "approved_users": list(approved_users)}},
+                upsert=True,
+            )
 
-    _command_states_cache = merged_states
-    _approved_users_cache = approved_users
-    return merged_states, approved_users
+        _command_states_cache = merged_states
+        _approved_users_cache = approved_users
+        _config_backend_error = None
+        return merged_states, approved_users
+    except Exception as exc:
+        _config_backend_error = str(exc)
+        print(f"Config backend unavailable, falling back to in-memory defaults: {exc}")
+        fallback_states = GLOBAL_COMMAND_DEFAULTS.copy()
+        fallback_approved_users: Set[int] = {settings.admin_chat_id} if settings.admin_chat_id else set()
+        _command_states_cache = fallback_states
+        _approved_users_cache = fallback_approved_users
+        return fallback_states, fallback_approved_users
 
 
 async def _set_command_state(command: str, enabled: bool) -> None:
     states, approved = await _ensure_config()
     states[command] = enabled
-    await CONFIG_COLLECTION.update_one(
-        {"_id": CONFIG_ID},
-        {"$set": {f"command_states.{command}": enabled}},
-        upsert=True,
-    )
+    try:
+        await CONFIG_COLLECTION.update_one(
+            {"_id": CONFIG_ID},
+            {"$set": {f"command_states.{command}": enabled}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"Failed to persist command state for {command}: {exc}")
 
 
 async def _add_approved_user(user_id: int) -> None:
     user_id = int(user_id)
     states, approved = await _ensure_config()
     approved.add(user_id)
-    await CONFIG_COLLECTION.update_one(
-        {"_id": CONFIG_ID},
-        {"$addToSet": {"approved_users": user_id}},
-        upsert=True,
-    )
+    try:
+        await CONFIG_COLLECTION.update_one(
+            {"_id": CONFIG_ID},
+            {"$addToSet": {"approved_users": user_id}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"Failed to persist approved user {user_id}: {exc}")
 
 
 async def _remove_approved_user(user_id: int) -> None:
     user_id = int(user_id)
     states, approved = await _ensure_config()
     approved.discard(user_id)
-    await CONFIG_COLLECTION.update_one(
-        {"_id": CONFIG_ID},
-        {"$pull": {"approved_users": user_id}},
-        upsert=True,
-    )
+    try:
+        await CONFIG_COLLECTION.update_one(
+            {"_id": CONFIG_ID},
+            {"$pull": {"approved_users": user_id}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"Failed to persist revoked user {user_id}: {exc}")
 
 
 def _format_command_overview(include_status: bool = False) -> str:
@@ -106,118 +128,120 @@ def _format_command_overview(include_status: bool = False) -> str:
         status = states.get(command, GLOBAL_COMMAND_DEFAULTS[command])
         if include_status:
             state_text = "Enabled" if status else "Disabled"
-            lines.append(f"- {command}: {state_text}")
+            lines.append(f"• {command}: {state_text}")
         else:
-            lines.append(f"- {command}")
+            lines.append(f"• {command}")
     return "\n".join(lines)
 
 
 def _format_simple_list(names) -> str:
-    return "\n".join(f"- {name}" for name in sorted(names))
+    return "\n".join(f"• {name}" for name in sorted(names))
 
 
 @is_admin
 async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Enable a command."""
     states, _ = await _ensure_config()
     if not context.args:
         overview = _format_command_overview()
         group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
         notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
         message = (
-            "Usage: /enable <command_name>\n\n"
-            "Global commands:\n"
+            "<b>Enable Command</b>\n"
+            "Use <code>/enable &lt;command_name&gt;</code>.\n\n"
+            "<b>Global commands</b>\n"
             f"{overview}\n\n"
-            "Group commands (manage with /group_manage):\n"
+            "<b>Group commands</b>\n"
             f"{group_list}\n\n"
-            "Notes commands (manage with /notes_manage):\n"
+            "<b>Notes commands</b>\n"
             f"{notes_list}"
         )
-        await update.message.reply_text(message)
+        await update.message.reply_text(message, parse_mode="HTML")
         return
 
     command = context.args[0].lower()
     if command in GLOBAL_COMMAND_DEFAULTS:
         if states.get(command, True):
-            await update.message.reply_text(f"{command} command is already enabled.")
+            await update.message.reply_text(f"ℹ️ <code>{command}</code> is already enabled.", parse_mode="HTML")
         else:
             await _set_command_state(command, True)
-            await update.message.reply_text(f"{command} command has been enabled.")
+            await update.message.reply_text(f"✅ <code>{command}</code> has been enabled.", parse_mode="HTML")
     else:
         overview = _format_command_overview()
         group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
         notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
         await update.message.reply_text(
-            "Invalid command.\n\n"
-            "Global commands:\n"
+            "<b>Unknown Command</b>\n"
+            "I couldn't find that command in the global toggle list.\n\n"
+            "<b>Global commands</b>\n"
             f"{overview}\n\n"
-            "Group commands (manage with /group_manage):\n"
+            "<b>Group commands</b>\n"
             f"{group_list}\n\n"
-            "Notes commands (manage with /notes_manage):\n"
-            f"{notes_list}"
+            "<b>Notes commands</b>\n"
+            f"{notes_list}",
+            parse_mode="HTML",
         )
 
 
 @is_admin
 async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Disable a command."""
     states, _ = await _ensure_config()
     if not context.args:
         overview = _format_command_overview()
         group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
         notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
         message = (
-            "Usage: /disable <command_name>\n\n"
-            "Global commands:\n"
+            "<b>Disable Command</b>\n"
+            "Use <code>/disable &lt;command_name&gt;</code>.\n\n"
+            "<b>Global commands</b>\n"
             f"{overview}\n\n"
-            "Group commands (manage with /group_manage):\n"
+            "<b>Group commands</b>\n"
             f"{group_list}\n\n"
-            "Notes commands (manage with /notes_manage):\n"
+            "<b>Notes commands</b>\n"
             f"{notes_list}"
         )
-        await update.message.reply_text(message)
+        await update.message.reply_text(message, parse_mode="HTML")
         return
 
     command = context.args[0].lower()
     if command in GLOBAL_COMMAND_DEFAULTS:
         if not states.get(command, True):
-            await update.message.reply_text(f"{command} command is already disabled.")
+            await update.message.reply_text(f"ℹ️ <code>{command}</code> is already disabled.", parse_mode="HTML")
         else:
             await _set_command_state(command, False)
-            await update.message.reply_text(f"{command} command has been disabled.")
+            await update.message.reply_text(f"🛑 <code>{command}</code> has been disabled.", parse_mode="HTML")
     else:
         overview = _format_command_overview()
         group_list = _format_simple_list(GROUP_COMMAND_DEFAULTS.keys())
         notes_list = _format_simple_list(NOTES_COMMAND_DEFAULTS.keys())
         await update.message.reply_text(
-            "Invalid command.\n\n"
-            "Global commands:\n"
+            "<b>Unknown Command</b>\n"
+            "I couldn't find that command in the global toggle list.\n\n"
+            "<b>Global commands</b>\n"
             f"{overview}\n\n"
-            "Group commands (manage with /group_manage):\n"
+            "<b>Group commands</b>\n"
             f"{group_list}\n\n"
-            "Notes commands (manage with /notes_manage):\n"
-            f"{notes_list}"
+            "<b>Notes commands</b>\n"
+            f"{notes_list}",
+            parse_mode="HTML",
         )
 
 
 @is_admin
 async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Revoke a user's approval to access commands."""
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         await _remove_approved_user(user_id)
-        await update.message.reply_text(f"User {user_id} has been revoked from access.")
+        await update.message.reply_text(f"🚫 User <code>{user_id}</code> has been revoked.", parse_mode="HTML")
     else:
-        await update.message.reply_text("Please reply to the user's message to revoke their approval.")
+        await update.message.reply_text("↩️ Reply to a user's message to revoke their approval.")
 
 
 @is_admin
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Approve a user to access all commands by reply, username, or user ID."""
     if update.message.reply_to_message:
         target_user_id = update.message.reply_to_message.from_user.id
         await _add_approved_user(target_user_id)
-        await update.message.reply_text(f"User {target_user_id} has been approved.")
+        await update.message.reply_text(f"✅ User <code>{target_user_id}</code> has been approved.", parse_mode="HTML")
         return
 
     if context.args:
@@ -225,7 +249,7 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if identifier.isdigit():
             target_user_id = int(identifier)
             await _add_approved_user(target_user_id)
-            await update.message.reply_text(f"User with ID {target_user_id} has been approved.")
+            await update.message.reply_text(f"✅ User ID <code>{target_user_id}</code> has been approved.", parse_mode="HTML")
             return
 
         if identifier.startswith('@'):
@@ -234,20 +258,24 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 chat = await context.bot.get_chat(username)
                 target_user_id = chat.id
                 await _add_approved_user(target_user_id)
-                await update.message.reply_text(f"User {username} (ID: {target_user_id}) has been approved.")
+                await update.message.reply_text(
+                    f"✅ {username} has been approved.\nUser ID: <code>{target_user_id}</code>",
+                    parse_mode="HTML",
+                )
             except Exception:
                 await update.message.reply_text(
-                    f"Error: Could not find user {username}. Ensure the username is correct and the user has interacted with the bot."
+                    f"⚠️ I couldn't find {username}. Make sure the username is correct and the user has already interacted with the bot."
                 )
             return
 
     await update.message.reply_text(
-        "Please reply to a user's message, or provide a username (e.g., @username) or user ID (e.g., 123456789)."
+        "<b>How To Approve A User</b>\n"
+        "Reply to the user's message, or send <code>/approve @username</code> or <code>/approve 123456789</code>.",
+        parse_mode="HTML",
     )
 
 
 async def check_user_approval(user_id: int) -> bool:
-    """Check if a user is approved before allowing commands."""
     try:
         user_id = int(user_id)
     except (TypeError, ValueError):
@@ -260,7 +288,6 @@ async def check_user_approval(user_id: int) -> bool:
 
 
 async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Block unapproved users from interacting with the bot."""
     user = update.effective_user
     if not user:
         return
@@ -271,13 +298,9 @@ async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.message:
         message = update.message
         if message.entities:
-            is_command = any(
-                entity.type == "bot_command" and entity.offset == 0 for entity in message.entities
-            )
+            is_command = any(entity.type == "bot_command" and entity.offset == 0 for entity in message.entities)
         if not is_command and message.caption_entities:
-            is_command = any(
-                entity.type == "bot_command" and entity.offset == 0 for entity in message.caption_entities
-            )
+            is_command = any(entity.type == "bot_command" and entity.offset == 0 for entity in message.caption_entities)
         if not is_command and message.text:
             is_command = message.text.strip().startswith("/")
         if not is_command and message.caption:
@@ -292,15 +315,14 @@ async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if update.callback_query:
-        await update.callback_query.answer("❌ You are not approved to use this bot.", show_alert=True)
+        await update.callback_query.answer("You are not approved to use this bot yet.", show_alert=True)
     elif update.message:
-        await update.message.reply_text("❌ You are not approved to use this bot.")
+        await update.message.reply_text("⚠️ You are not approved to use this bot yet.")
 
     raise ApplicationHandlerStop
 
 
 async def check_command_enabled(command: str) -> bool:
-    """Check if a command is enabled."""
     states, _ = await _ensure_config()
     if command not in GLOBAL_COMMAND_DEFAULTS:
         return True
@@ -309,9 +331,10 @@ async def check_command_enabled(command: str) -> bool:
 
 @is_admin
 async def list_commands_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Lists the current status (enabled/disabled) of all toggleable commands."""
     await _ensure_config()
-    status_message = "📊 Command Status:\n\n"
+    status_message = "<b>Command Status</b>\n\n"
     status_message += _format_command_overview(include_status=True)
-    status_message += "\n\nℹ️ Use /group_manage or /notes_manage for chat-specific command controls."
-    await update.message.reply_text(status_message)
+    status_message += "\n\nUse <code>/group_manage</code> or <code>/notes_manage</code> for chat-specific controls."
+    if _config_backend_error:
+        status_message += "\n\n⚠️ MongoDB is unavailable right now, so these values are using in-memory defaults."
+    await update.message.reply_text(status_message, parse_mode="HTML")

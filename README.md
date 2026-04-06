@@ -3,11 +3,11 @@
 ## 1. Prerequisites
 
 - Python 3.10+
-- MongoDB Atlas cluster (or self-hosted MongoDB)
+- MongoDB Atlas cluster or self-hosted MongoDB
 - Telegram bot token
-- Optional: remove.bg API key, Gemini API key, YouTube API key
-- **Keepalived (for multi-node high availability)**
-- **Tailscale (for private mesh connectivity between nodes)**
+- Optional API keys for remove.bg and Gemini
+- Optional qBittorrent for torrent-based mirroring
+- Optional Keepalived plus Tailscale for active/passive failover
 
 ---
 
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ## 3. Environment Configuration
 
-Create a `.env` file at the project root (or copy `.env.example`) and set your secrets:
+Create a `.env` file at the project root or copy `.env.example`.
 
 ```ini
 BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
@@ -33,112 +33,75 @@ ADMIN_CHAT_ID=123456789
 YT_API=YOUR_YOUTUBE_API_KEY
 BOT_USERNAME=your_bot_username
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
-REMOVE_BG_API_KEY=your_remove_bg_api_key
-MONGODB_URI=your_mongodb_connection_string
+REMOVE_BG_API_KEY=YOUR_REMOVE_BG_API_KEY
+MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB_NAME=telegram_bot
-
 UPLOAD_TARGET=pixeldrain
-UPLOAD_TARGETS=pixeldrain,gofile
+UPLOAD_TARGETS=
 PIXELDRAIN_KEY=
 GOFILE_TOKEN=
 GOFILE_FOLDER_ID=
 GOFILE_UPLOAD_ENDPOINTS=
-
 QBITTORRENT_HOST=http://localhost
 QBITTORRENT_PORT=8080
 QBITTORRENT_USERNAME=admin
 QBITTORRENT_PASSWORD=adminadmin
 QBITTORRENT_CATEGORY=
-
 MIRROR_STATUS_INTERVAL=5
 MIRROR_DOWNLOAD_DIR=downloads/mirror
 ```
 
-> **Security Tip:** Do **not** commit `.env` to Git.  
-> Rotate your tokens and keys periodically for security.
+Security tip: never commit `.env` to Git, and rotate credentials periodically.
 
 ---
 
-## 4. Migrate Legacy Data to MongoDB
+## 4. Optional Legacy Migration
 
-If upgrading from an older version that used JSON-based storage:
+If you are upgrading from an older JSON-backed deployment, you can run:
 
 ```bash
 python migrate_to_mongo.py
 ```
 
-This imports your legacy `command_states.json`, `approved_users.json`, and related data into MongoDB.
+The migration script only imports legacy files if they exist, for example `command_states.json`, `approved_users.json`, `group_management_command_states.json`, and `notes_command_states.json`.
 
 ---
 
-## 5. Run the Bot (Single Instance)
+## 5. Run the Bot
 
-To test locally:
+Run a single polling instance:
 
 ```bash
 python bot.py
 ```
 
-If `BOT_TOKEN` or `ADMIN_CHAT_ID` are missing, startup will fail with an explicit error message.
+If `BOT_TOKEN` is missing, startup fails immediately. If `ADMIN_CHAT_ID` is missing, the bot still starts but admin approvals and notifications will not work correctly.
 
 ---
 
-## 6. Docker Compose (Optional)
+## 6. Docker Compose
 
-You can run the bot inside Docker:
+Use Docker Compose only for a single polling instance:
 
 ```bash
 docker-compose up -d
 ```
 
-Your `.env` file is automatically loaded.  
-Ensure MongoDB is reachable via the `MONGODB_URI` specified.
+The checked-in Compose file intentionally runs one bot container because Telegram long polling should not be scaled horizontally with multiple replicas on the same bot token.
 
 ---
 
-## 7. Keepalived High-Availability Setup (Tailscale Mesh Cluster)
+## 7. Keepalived High Availability
 
-Your HA setup runs across three nodes connected with **Tailscale**.  
-Keepalived ensures only one node (the MASTER) runs the bot at any time.
+This repo uses an active/passive design. Only one node should run `telegram-bot` at a time.
 
-| Node | Role | Tailscale IP |
-|------|------|--------------|
-| Oracle Cloud | **MASTER** | `100.89.244.74` |
-| 192.168.5.245 | BACKUP 1 | `100.106.162.6` |
-| 192.168.5.239 | BACKUP 2 | `100.90.27.12` |
+### Example `keepalived.conf`
 
-### Step 1: Install and connect Tailscale
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh --accept-dns=false
-tailscale status
-```
-
-Verify connectivity:
-```bash
-tailscale ping 100.89.244.74
-tailscale ping 100.106.162.6
-tailscale ping 100.90.27.12
-```
-
-### Step 2: Install Keepalived and the control script
-
-```bash
-sudo apt-get install -y keepalived
-sudo cp bot_ha.sh /etc/keepalived/bot_ha.sh
-sudo chmod +x /etc/keepalived/bot_ha.sh
-```
-
-### Step 3: Keepalived configuration
-
-Each node uses `/etc/keepalived/keepalived.conf` with its own `state`, `priority`, and `unicast_src_ip`.
-
-#### Oracle (MASTER)
+Each node uses the same structure and changes only its `state`, `priority`, and `unicast_src_ip`.
 
 ```conf
 global_defs {
-  router_id BOT_ORACLE
+  router_id BOT_NODE
   script_user root
   enable_script_security
 }
@@ -152,10 +115,10 @@ vrrp_script check_bot {
 }
 
 vrrp_instance VI_1 {
-  state MASTER
+  state BACKUP
   interface tailscale0
   virtual_router_id 51
-  priority 160
+  priority 100
   advert_int 1
 
   unicast_src_ip 100.89.244.74
@@ -164,54 +127,22 @@ vrrp_instance VI_1 {
     100.90.27.12
   }
 
-  track_script { check_bot }
+  track_script {
+    check_bot
+  }
 
   notify_master "/etc/keepalived/bot_ha.sh master"
   notify_backup "/etc/keepalived/bot_ha.sh backup"
-  notify_fault  "/etc/keepalived/bot_ha.sh fault"
+  notify_fault "/etc/keepalived/bot_ha.sh fault"
 }
 ```
 
-#### 245 (BACKUP 1)
+Notes:
+- There is no floating VIP in this setup.
+- Keepalived only manages service leadership.
+- The helper script starts and stops the `telegram-bot` systemd service.
 
-Change to:
-```
-state BACKUP
-priority 120
-unicast_src_ip 100.106.162.6
-```
-
-#### 239 (BACKUP 2)
-
-Change to:
-```
-state BACKUP
-priority 100
-unicast_src_ip 100.90.27.12
-```
-
-All share the same peer list.
-
-> **Note:** There is **no VIP** here; Keepalived manages service leadership only.
-
----
-
-### Step 4: Enable and start Keepalived
-
-```bash
-sudo systemctl enable keepalived
-sudo systemctl restart keepalived
-sudo systemctl status keepalived
-```
-
-Check leader:
-```bash
-journalctl -u keepalived -n 30 --no-pager | grep MASTER
-```
-
----
-
-### Step 5: Systemd service for the bot
+### Example systemd service
 
 Create `/etc/systemd/system/telegram-bot.service`:
 
@@ -224,7 +155,7 @@ Wants=network-online.target
 [Service]
 User=root
 WorkingDirectory=/root/telegram-bot
-ExecStart=/usr/local/bin/run-telegram-bot.sh
+ExecStart=/usr/bin/python3 /root/telegram-bot/bot.py
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -238,62 +169,24 @@ Then enable it:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable telegram-bot
+sudo systemctl restart telegram-bot
 ```
-
----
-
-### Step 6: Failover testing
-
-1. Stop Keepalived on Oracle:
-   ```bash
-   sudo systemctl stop keepalived
-   ```
-   Within seconds, node 245 becomes MASTER.
-
-2. Restart Oracle Keepalived to reclaim MASTER:
-   ```bash
-   sudo systemctl start keepalived
-   ```
-
----
-
-### Step 7: How it works
-
-- Only one node runs `telegram-bot` (the MASTER).  
-- Backup nodes stay in sync and take over if the MASTER fails.  
-- Health checks use `systemctl is-active telegram-bot`.  
-- All communication is over secure Tailscale IPs.
 
 ---
 
 ## 8. Useful Commands
 
-**Check MongoDB collections:**
-```python
-from settings import settings
-from database import get_collection
-import asyncio
-
-async def inspect():
-    cfg = await get_collection('bot_config').find_one({'_id': 'global'})
-    print(cfg)
-
-asyncio.run(inspect())
-```
-
-**Bot management commands (in Telegram):**
+Bot management commands in Telegram:
 - `/approve`, `/revoke`, `/listcommands`
 - `/mirror`, `/cancel`, `/enable`, `/disable`
+- `/group_manage`, `/notes_manage`
 
 ---
 
 ## 9. Maintenance Tips
 
-- Back up MongoDB regularly (`mongodump` or Atlas snapshots).
+- Back up MongoDB regularly.
 - Rotate API keys periodically.
-- If you change Tailscale IPs, update all `keepalived.conf` files.
-- Logs from HA scripts appear in `journalctl -u keepalived` and `/var/log/syslog`.
-
----
-
-With this setup, your Telegram bot runs in a **3-node high-availability cluster** over **Tailscale**, with seamless failover and centralized MongoDB state. 🎯
+- Keep only one polling bot active for a given token.
+- If Tailscale IPs change, update all Keepalived peer definitions.
+- Keepalived helper logs go to `/var/log/bot_ha.log`.

@@ -6,36 +6,36 @@ from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from functools import wraps
-from group_management_commands import group_management_command_enabled_check, group_manage_command, group_manage_callback
+from command_registry import get_default_group_commands
 
 # --- Constants ---
-ADMIN_ONLY_MSG = "❌ You must be an admin to use this command."
-ADMIN_PERMISSION_MSG = "❌ You must be an admin to change this setting."
-REPLY_TO_USER_MSG = "Reply to a user's message to use this command."
-NO_ADMIN_MUTE_BAN_MSG = "😂 Trying to mute an admin? Bold. But I can't."
-NO_ADMIN_KICK_MSG = "👢 Kicking an admin? That's a declaration of war I can't participate in."
-NO_ADMIN_BAN_MSG = "🚫 Ban an admin? Nice thought, but it's not happening."
-NO_ADMIN_TBAN_MSG = "🚫 Can't put an admin in time-out. They own the naughty corner."
-NO_ADMIN_WARN_MSG = "⚠️ Warn an admin? They probably wrote the rules."
-INVALID_TIME_FORMAT_MSG = "Invalid time format. Use 'm', 'h', or 'd'. E.g., /tmute 30m"
-BOT_NO_RESTRICT_PERMISSION_MSG = "❌ I don't have permission to restrict members. Grant me 'Restrict members' right."
-BOT_NO_DELETE_PERMISSION_MSG = "❌ I don't have permission to delete messages. Grant me 'Delete messages' right."
-BOT_NO_PROMOTE_PERMISSION_MSG = "❌ I don't have permission to promote members. Grant me 'Promote Members' right."
-BOT_NO_CHANGE_INFO_PERMISSION_MSG = "❌ I don't have permission to change chat info. Grant me 'Change Info' right."
-BOT_NO_INVITE_USERS_PERMISSION_MSG = "❌ I don't have permission to invite users. Grant me 'Invite Users' right."
-BOT_NO_PIN_MESSAGES_PERMISSION_MSG = "❌ I don't have permission to pin messages. Grant me 'Pin Messages' right."
-BOT_NO_MANAGE_TOPICS_PERMISSION_MSG = "❌ I don't have permission to manage topics. Grant me 'Manage Topics' right."
-BOT_NO_DELETE_MESSAGES_PERMISSION_MSG = "❌ I don't have permission to delete messages. Grant me 'Delete Messages' right."
-USAGE_FILTER_MSG = "Usage: /filter <keyword> <reply>"
-USAGE_STOP_MSG = "Usage: /stop <keyword>"
-USAGE_UNBAN_MSG = "Usage: /unban <user_id>"
-USAGE_WARN_LIMIT_MSG = "Usage: /warnlimit <number>"
-USAGE_WARN_MODE_MSG = "Usage: /warnmode <mute|kick|ban>"
-USAGE_PIN_MSG = "Usage: /pin [loud] <text> or reply to a message."
-USAGE_PURGE_MSG = "Usage: /purge <number> or reply to a message."
-NO_USERNAME_ADMINS_MSG = "No admins with usernames found to mention."
-USER_NOT_ADMIN_PROMOTE_FIRST_MSG = "❌ User is not an admin. Promote them first."
-USER_NO_LONGER_ADMIN_MSG = "❌ User is no longer an admin."
+ADMIN_ONLY_MSG = "🔒 You must be an admin to use this command."
+ADMIN_PERMISSION_MSG = "🔒 You must be an admin to change this setting."
+REPLY_TO_USER_MSG = "↩️ Reply to a user's message to use this command."
+NO_ADMIN_MUTE_BAN_MSG = "⚠️ You cannot mute or ban another admin."
+NO_ADMIN_KICK_MSG = "⚠️ You cannot kick another admin."
+NO_ADMIN_BAN_MSG = "⚠️ You cannot ban another admin."
+NO_ADMIN_TBAN_MSG = "⚠️ You cannot temporarily ban another admin."
+NO_ADMIN_WARN_MSG = "⚠️ You cannot warn another admin."
+INVALID_TIME_FORMAT_MSG = "⏱️ Invalid time format. Use m, h, or d. Example: /tmute 30m"
+BOT_NO_RESTRICT_PERMISSION_MSG = "⚠️ I need the Restrict Members permission to do that."
+BOT_NO_DELETE_PERMISSION_MSG = "⚠️ I need the Delete Messages permission to do that."
+BOT_NO_PROMOTE_PERMISSION_MSG = "⚠️ I need the Promote Members permission to do that."
+BOT_NO_CHANGE_INFO_PERMISSION_MSG = "⚠️ I need the Change Chat Info permission to do that."
+BOT_NO_INVITE_USERS_PERMISSION_MSG = "⚠️ I need the Invite Users permission to do that."
+BOT_NO_PIN_MESSAGES_PERMISSION_MSG = "⚠️ I need the Pin Messages permission to do that."
+BOT_NO_MANAGE_TOPICS_PERMISSION_MSG = "⚠️ I need the Manage Topics permission to do that."
+BOT_NO_DELETE_MESSAGES_PERMISSION_MSG = "⚠️ I need the Delete Messages permission to do that."
+USAGE_FILTER_MSG = "🧩 Usage: /filter <keyword> <reply>"
+USAGE_STOP_MSG = "🧩 Usage: /stop <keyword>"
+USAGE_UNBAN_MSG = "🧾 Usage: /unban <user_id>"
+USAGE_WARN_LIMIT_MSG = "⚠️ Usage: /warnlimit <number>"
+USAGE_WARN_MODE_MSG = "⚠️ Usage: /warnmode <mute|kick|ban>"
+USAGE_PIN_MSG = "📌 Usage: /pin [loud] <text> or reply to a message."
+USAGE_PURGE_MSG = "🧹 Usage: /purge <number> or reply to a message."
+NO_USERNAME_ADMINS_MSG = "ℹ️ No admins with usernames are available to tag."
+USER_NOT_ADMIN_PROMOTE_FIRST_MSG = "ℹ️ That user is not an admin. Promote them first."
+USER_NO_LONGER_ADMIN_MSG = "ℹ️ That user is no longer an admin."
 
 # --- Decorators ---
 def error_handler(func):
@@ -47,9 +47,9 @@ def error_handler(func):
             error_text = str(e)
             print(f"Telegram error in {func.__name__}: {error_text}")
             if "chat_admin_required" in error_text.lower():
-                friendly = "❌ I need to be an admin with the necessary permissions to do that. Please promote me and try again."
+                friendly = "⚠️ I need to be an admin with the required permissions to do that. Please promote me and try again."
             else:
-                friendly = f"❌ Telegram error: {error_text}"
+                friendly = f"⚠️ Telegram error: {error_text}"
 
             if update.message:
                 await update.message.reply_text(friendly)
@@ -58,9 +58,9 @@ def error_handler(func):
         except Exception as e:
             print(f"Error in {func.__name__}: {e}")
             if update.message:
-                await update.message.reply_text(f"❌ An unexpected error occurred: {e}")
+                await update.message.reply_text(f"⚠️ An unexpected error occurred: {e}")
             elif update.callback_query:
-                await update.callback_query.answer(f"❌ An unexpected error occurred: {e}", show_alert=True)
+                await update.callback_query.answer(f"⚠️ An unexpected error occurred: {e}", show_alert=True)
     return wrapped
 
 def bot_has_permissions(permissions: list[str]):
@@ -75,7 +75,7 @@ def bot_has_permissions(permissions: list[str]):
                     missing_permissions.append(perm.replace("can_", "").replace("_", " ").capitalize())
             
             if missing_permissions:
-                msg = f"❌ I need the following permissions to perform this action: {', '.join(missing_permissions)}."
+                msg = f"⚠️ I need these permissions to do that: {', '.join(missing_permissions)}."
                 if update.message:
                     await update.message.reply_text(msg)
                 elif update.callback_query:
@@ -87,8 +87,110 @@ def bot_has_permissions(permissions: list[str]):
 
 from settings import settings
 from database import get_collection
+from toggle_ui import build_toggle_keyboard
 
 GROUPS_COLLECTION = get_collection("group_data")
+GROUP_COMMANDS_COLLECTION = get_collection("group_management_command_states")
+GROUP_COMMANDS = get_default_group_commands()
+
+
+async def load_group_command_states(chat_id: int) -> dict:
+    doc = await GROUP_COMMANDS_COLLECTION.find_one({"_id": chat_id})
+    if not doc:
+        return GROUP_COMMANDS.copy()
+    stored = doc.get("commands", {})
+    states = GROUP_COMMANDS.copy()
+    states.update({name: bool(value) for name, value in stored.items() if name in GROUP_COMMANDS})
+    return states
+
+
+async def save_group_command_states(chat_id: int, states: dict) -> None:
+    await GROUP_COMMANDS_COLLECTION.update_one(
+        {"_id": chat_id},
+        {"$set": {"commands": states}},
+        upsert=True,
+    )
+
+
+def group_management_command_enabled_check(command_name: str):
+    def decorator(func):
+        @wraps(func)
+        async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            states = await load_group_command_states(update.effective_chat.id)
+            if not states.get(command_name, True):
+                return
+            return await func(update, context, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
+async def _build_group_manage_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    states = await load_group_command_states(chat_id)
+    return build_toggle_keyboard(
+        (
+            (command_name.capitalize(), enabled, f"group_manage_toggle_{command_name}")
+            for command_name, enabled in sorted(states.items())
+        ),
+        extra_rows=[
+            [
+                InlineKeyboardButton("Enable All", callback_data="group_manage_all_enable"),
+                InlineKeyboardButton("Disable All", callback_data="group_manage_all_disable"),
+            ]
+        ],
+    )
+
+
+async def group_manage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != settings.admin_chat_id:
+        await update.message.reply_text("🔒 You are not authorized to use this command.")
+        return
+
+    reply_markup = await _build_group_manage_keyboard(update.effective_chat.id)
+    await update.message.reply_text("⚙️ Manage group commands from the panel below.", reply_markup=reply_markup)
+
+
+async def group_manage_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != settings.admin_chat_id:
+        await query.answer("🔒 You are not authorized to change these settings.", show_alert=True)
+        return
+
+    chat_id = query.message.chat.id
+    states = await load_group_command_states(chat_id)
+    data = query.data
+
+    if data == "group_manage_all_enable":
+        for command_name in states:
+            states[command_name] = True
+        await save_group_command_states(chat_id, states)
+        await query.edit_message_text("✅ All group management commands are now enabled.", reply_markup=await _build_group_manage_keyboard(chat_id))
+        return
+
+    if data == "group_manage_all_disable":
+        for command_name in states:
+            states[command_name] = False
+        await save_group_command_states(chat_id, states)
+        await query.edit_message_text("🛑 All group management commands are now disabled.", reply_markup=await _build_group_manage_keyboard(chat_id))
+        return
+
+    if data.startswith("group_manage_toggle_"):
+        command_name = data.removeprefix("group_manage_toggle_")
+        if command_name in states:
+            states[command_name] = not states[command_name]
+            await save_group_command_states(chat_id, states)
+            status = "enabled" if states[command_name] else "disabled"
+            await query.edit_message_text(
+                f"Command `{command_name}` is now {status}.",
+                reply_markup=await _build_group_manage_keyboard(chat_id),
+                parse_mode="Markdown",
+            )
+            return
+
+    await query.edit_message_text("⚠️ Invalid command selected.")
 
 # Canonical lock keys used across storage, UI, and enforcement.
 LOCKABLE_TYPES = [
@@ -271,16 +373,16 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = await load_group(chat_id)
 
     if not context.args:
-        await update.message.reply_text(f"Welcome message:\n{group['welcome'] or '❌ Disabled'}")
+        await update.message.reply_text(f"Welcome message:\n{group['welcome'] or 'Disabled'}")
         return
 
     arg = " ".join(context.args)
     if arg.lower() in ['off', 'no']:
         group['welcome'] = None
-        await update.message.reply_text("❌ Welcome message disabled.")
+        await update.message.reply_text("Welcome message disabled.")
     else:
         group['welcome'] = arg
-        await update.message.reply_text(f"✅ Welcome message set to:\n{arg}")
+        await update.message.reply_text(f"Welcome message set to:\n{arg}")
 
     await save_group(chat_id, group)
 
@@ -293,16 +395,16 @@ async def goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = await load_group(chat_id)
 
     if not context.args:
-        await update.message.reply_text(f"Goodbye message:\n{group['goodbye'] or '❌ Disabled'}")
+        await update.message.reply_text(f"Goodbye message:\n{group['goodbye'] or 'Disabled'}")
         return
 
     arg = " ".join(context.args)
     if arg.lower() in ['off', 'no']:
         group['goodbye'] = None
-        await update.message.reply_text("❌ Goodbye message disabled.")
+        await update.message.reply_text("Goodbye message disabled.")
     else:
         group['goodbye'] = arg
-        await update.message.reply_text(f"✅ Goodbye message set to:\n{arg}")
+        await update.message.reply_text(f"Goodbye message set to:\n{arg}")
 
     await save_group(chat_id, group)
 
@@ -326,7 +428,7 @@ async def mention_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group[f'{type}_mention'] = mention_enabled
     await save_group(chat_id, group)
     
-    await query.edit_message_text(f"✅ User mentions for {type} message have been {'enabled' if mention_enabled else 'disabled'}.")
+    await query.edit_message_text(f"User mentions for {type} message have been {'enabled' if mention_enabled else 'disabled'}.")
 
 def _format_member_message(msg: str, member, chat_title: str) -> str:
     """Formats a message with member and chat details."""
@@ -410,7 +512,7 @@ async def add_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = " ".join(context.args[1:])
     group['filters'][trigger] = reply
     await save_group(chat_id, group)
-    await update.message.reply_text(f"✅ Filter added for '{trigger}'")
+    await update.message.reply_text(f"Filter added for '{trigger}'")
 
 @admin_only
 @group_management_command_enabled_check("stop")
@@ -425,9 +527,9 @@ async def remove_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if trigger in group['filters']:
         del group['filters'][trigger]
         await save_group(chat_id, group)
-        await update.message.reply_text(f"✅ Filter '{trigger}' removed")
+        await update.message.reply_text(f"Filter '{trigger}' removed")
     else:
-        await update.message.reply_text("❌ Filter not found.")
+        await update.message.reply_text("Filter not found.")
 
 def _check_entities(update: Update, entity_types) -> bool:
     """Helper to check for entities in a message or its caption."""
@@ -609,7 +711,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user_id,
         permissions=ChatPermissions(can_send_messages=False)
     )
-    await update.message.reply_text("🔇 User muted.")
+    await update.message.reply_text("User muted.")
 
 @admin_only
 @group_management_command_enabled_check("tmute")
@@ -640,7 +742,7 @@ async def tmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         permissions=ChatPermissions(can_send_messages=False),
         until_date=int(until_date)
     )
-    await update.message.reply_text(f"🔇 User muted for {duration_str}.")
+    await update.message.reply_text(f"User muted for {duration_str}.")
 
 @admin_only
 @group_management_command_enabled_check("unmute")
@@ -656,7 +758,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id,
         permissions=ChatPermissions(can_send_messages=True, can_send_photos=True, can_send_videos=True, can_send_audios=True, can_send_voice_notes=True, can_send_documents=True, can_send_video_notes=True, can_send_other_messages=True, can_add_web_page_previews=True)
     )
-    await update.message.reply_text("🔊 User unmuted.")
+    await update.message.reply_text("User unmuted.")
 
 @admin_only
 @group_management_command_enabled_check("kick")
@@ -676,7 +778,7 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.ban_chat_member(chat_id, target_user_id)
     await context.bot.unban_chat_member(chat_id, target_user_id)
-    await update.message.reply_text("👢 User kicked.")
+    await update.message.reply_text("User kicked.")
 
 @admin_only
 @group_management_command_enabled_check("ban")
@@ -695,7 +797,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await context.bot.ban_chat_member(chat_id, target_user_id)
-    await update.message.reply_text("🚫 User banned.")
+    await update.message.reply_text("User banned.")
 
 @admin_only
 @group_management_command_enabled_check("tban")
@@ -721,7 +823,7 @@ async def tban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     until_date = time.time() + duration_sec
     await context.bot.ban_chat_member(chat_id, target_user_id, until_date=int(until_date))
-    await update.message.reply_text(f"🚫 User banned for {duration_str}.")
+    await update.message.reply_text(f"User banned for {duration_str}.")
 
 @admin_only
 @group_management_command_enabled_check("unban")
@@ -733,7 +835,7 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = int(context.args[0])
     await context.bot.unban_chat_member(update.effective_chat.id, user_id)
-    await update.message.reply_text("✅ User unbanned.")
+    await update.message.reply_text("User unbanned.")
 
 @admin_only
 @group_management_command_enabled_check("purge")
@@ -786,12 +888,12 @@ async def purge(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Log error but continue with other messages
                 print(f"Error deleting message {msg_id} in chat {chat_id}: {e}")
         
-        await context.bot.send_message(chat_id, f"✅ Purged {deleted_count} messages.")
+        await context.bot.send_message(chat_id, f"Purged {deleted_count} messages.")
 
     except ValueError:
         await update.message.reply_text(USAGE_PURGE_MSG)
     except Exception as e:
-        await update.message.reply_text(f"❌ An error occurred during purge: {e}")
+        await update.message.reply_text(f"An error occurred during purge: {e}")
 
 # --------------------- Warning System ---------------------
 
@@ -822,7 +924,7 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reason_text = escape_markdown(reason, version=2) if reason else default_reason
 
     warn_message = (
-        f"⚠️ Warned {target_user.mention_markdown_v2()} "
+        f"Warned {target_user.mention_markdown_v2()} "
         f"\\({warn_counts[user_id_str]}/{limit}\\).\n"
         f"Reason: {reason_text}"
     )
@@ -831,7 +933,7 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if warn_counts[user_id_str] >= limit:
         mode = group.get('warn_mode', 'mute')
-        await update.message.reply_text(f"🚨 User reached warning limit. Action: {mode.capitalize()}.")
+        await update.message.reply_text(f"User reached warning limit. Action: {mode.capitalize()}.")
         if mode == 'kick':
             await kick(update, context)
         elif mode == 'ban':
@@ -871,7 +973,7 @@ async def set_warn_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = await load_group(chat_id)
     group['warn_limit'] = int(context.args[0])
     await save_group(chat_id, group)
-    await update.message.reply_text(f"✅ Warning limit set to {context.args[0]}.")
+    await update.message.reply_text(f"Warning limit set to {context.args[0]}.")
 
 @admin_only
 @group_management_command_enabled_check("warnmode")
@@ -884,28 +986,24 @@ async def set_warn_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group = await load_group(chat_id)
     group['warn_mode'] = context.args[0].lower()
     await save_group(chat_id, group)
-    await update.message.reply_text(f"✅ Warning mode set to {context.args[0].lower()}.")
+    await update.message.reply_text(f"Warning mode set to {context.args[0].lower()}.")
 
 
 # --------------------- Group Settings ---------------------
 
 def _build_locks_keyboard(locks: dict) -> InlineKeyboardMarkup:
-    keyboard = []
-    row = []
-    for i, lock_type in enumerate(LOCKABLE_TYPES):
-        status_icon = "🔒" if locks.get(lock_type) else "🔓"
-        label = _lock_label(lock_type)
-        button = InlineKeyboardButton(f"{status_icon} {label}", callback_data=f"toggle_lock_{lock_type}")
-        row.append(button)
-        if (i + 1) % 2 == 0 or i == len(LOCKABLE_TYPES) - 1: # Two columns or last button
-            keyboard.append(row)
-            row = []
-
-    keyboard.append([
-        InlineKeyboardButton("Lock All", callback_data="toggle_lock_all_lock"),
-        InlineKeyboardButton("Unlock All", callback_data="toggle_lock_all_unlock")
-    ])
-    return InlineKeyboardMarkup(keyboard)
+    return build_toggle_keyboard(
+        (
+            (_lock_label(lock_type), locks.get(lock_type, False), f"toggle_lock_{lock_type}")
+            for lock_type in LOCKABLE_TYPES
+        ),
+        extra_rows=[
+            [
+                InlineKeyboardButton("Lock All", callback_data="toggle_lock_all_lock"),
+                InlineKeyboardButton("Unlock All", callback_data="toggle_lock_all_unlock"),
+            ]
+        ],
+    )
 
 @admin_only
 @group_management_command_enabled_check("locks")
@@ -919,7 +1017,7 @@ async def locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         locks.setdefault(key, False)
 
     reply_markup = _build_locks_keyboard(locks)
-    await update.message.reply_text("🔧 Manage group locks:", reply_markup=reply_markup)
+    await update.message.reply_text("Manage group locks:", reply_markup=reply_markup)
 
 @bot_has_permissions(["can_restrict_members", "can_delete_messages"])
 @error_handler
@@ -959,7 +1057,7 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         lock_type = LOCK_KEY_ALIASES.get(raw_lock, raw_lock)
         if lock_type not in LOCKABLE_TYPES:
-            await query.edit_message_text("❌ Invalid lock selected.")
+            await query.edit_message_text("Invalid lock selected.")
             return
         locks[lock_type] = not locks.get(lock_type, False)
 
@@ -1002,15 +1100,15 @@ async def locks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Rebuild the keyboard with updated status
     reply_markup = _build_locks_keyboard(locks)
-    await query.edit_message_text("🔧 Manage group locks:", reply_markup=reply_markup)
+    await query.edit_message_text("Manage group locks:", reply_markup=reply_markup)
 
     try:
         await context.bot.set_chat_permissions(chat_id, permissions)
     except Exception as e:
         print(f"Failed to apply chat permissions for chat {chat_id}: {e}")
-        await query.answer("⚠️ Locks updated, but I couldn't apply chat permissions.", show_alert=True)
+        await query.answer("Locks updated, but I couldn't apply chat permissions.", show_alert=True)
     else:
-        await query.answer(text="✅ Settings updated and applied!")
+        await query.answer(text="Settings updated and applied.")
 
 @admin_only
 @group_management_command_enabled_check("pin")
@@ -1049,12 +1147,12 @@ async def action_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_state = group.get('action_delete', True)
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Auto-Delete ON", callback_data="action_set_on")],
-        [InlineKeyboardButton("❌ Auto-Delete OFF", callback_data="action_set_off")]
+        [InlineKeyboardButton("Auto-Delete ON", callback_data="action_set_on")],
+        [InlineKeyboardButton("Auto-Delete OFF", callback_data="action_set_off")]
     ])
 
     await update.message.reply_text(
-        f"🔧 Service Message Control\n\nCurrently, service messages (like user joins/leaves) are automatically deleted: **{'ON' if current_state else 'OFF'}**.\n\nChoose a new setting:",
+        f"Service Message Control\n\nCurrently, service messages are automatically deleted: **{'ON' if current_state else 'OFF'}**.\n\nChoose a new setting:",
         reply_markup=keyboard
     )
 
@@ -1075,7 +1173,7 @@ async def action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_group(chat_id, group)
     
     status = "ON" if new_state else "OFF"
-    await query.edit_message_text(f"✅ Service message auto-deletion is now **{status}**.", parse_mode="Markdown")
+    await query.edit_message_text(f"Service message auto-deletion is now **{status}**.", parse_mode="Markdown")
 
 # --------------------- Admin Roles ---------------------
 
@@ -1173,25 +1271,22 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
     except BadRequest as e:
         if "not enough rights" in str(e).lower():
-            await update.message.reply_text("❌ Promoted, but I cannot set custom titles. Grant me the ability to manage chat info.")
+            await update.message.reply_text("Promoted, but I cannot set custom titles. Grant me the ability to manage chat info.")
         else:
             raise
-    await update.message.reply_text(f"✅ Promoted with title: {custom_title}")
+    await update.message.reply_text(f"Promoted with title: {custom_title}")
 
 def _build_permissions_keyboard(target_user_id: int, current_rights_dict: dict) -> InlineKeyboardMarkup:
-    keyboard = []
-    row = []
-    for i, (perm_key, perm_name) in enumerate(PERMISSION_MAP.items()):
-        status_icon = "✅" if current_rights_dict.get(perm_name) else "❌"
-        button = InlineKeyboardButton(
-            f"{status_icon} {perm_key.replace('_', ' ').capitalize()}", 
-            callback_data=f"toggle_perm_{target_user_id}_{perm_key}"
-        )
-        row.append(button)
-        if (i + 1) % 2 == 0 or i == len(PERMISSION_MAP) - 1: # Two columns or last button
-            keyboard.append(row)
-            row = []
-    return InlineKeyboardMarkup(keyboard)
+    return build_toggle_keyboard(
+        (
+            (
+                perm_key.replace("_", " ").capitalize(),
+                bool(current_rights_dict.get(perm_name, False)),
+                f"toggle_perm_{target_user_id}_{perm_key}",
+            )
+            for perm_key, perm_name in PERMISSION_MAP.items()
+        ),
+    )
 
 @admin_only
 @group_management_command_enabled_check("permissions")
@@ -1216,7 +1311,7 @@ async def permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = _build_permissions_keyboard(target_user_id, current_rights_dict)
     await update.message.reply_text(
-        f"🔧 Managing permissions for {member.user.first_name}:",
+        f"Managing permissions for {member.user.first_name}:",
         reply_markup=reply_markup
     )
 
@@ -1243,7 +1338,7 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     bot_rights = await get_bot_admin_rights(context, chat_id)
     if not getattr(bot_rights, permission_name, False):
-        await query.answer(f"❌ I don't have permission to change '{perm_key}'.", show_alert=True)
+        await query.answer(f"I don't have permission to change '{perm_key}'.", show_alert=True)
         return
 
     # Start with a base of all permissions (e.g., MINIMAL_ADMIN_RIGHTS)
@@ -1268,10 +1363,10 @@ async def permissions_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # Rebuild the keyboard with updated status
     reply_markup = _build_permissions_keyboard(target_user_id, _chat_admin_rights_to_dict(new_rights))
     await query.edit_message_text(
-        f"🔧 Managing permissions for {member.user.first_name}:",
+        f"Managing permissions for {member.user.first_name}:",
         reply_markup=reply_markup
     )
-    await query.answer(f"✅ {perm_key.capitalize()} permission updated.")
+    await query.answer(f"{perm_key.capitalize()} permission updated.")
 
 @admin_only
 @group_management_command_enabled_check("demote")
@@ -1296,7 +1391,7 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id=target_user_id,
         **demote_rights
     )
-    await update.message.reply_text("✅ User demoted.")
+    await update.message.reply_text("User demoted.")
 
 
 # --------------------- Utility ---------------------
@@ -1335,7 +1430,7 @@ async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reason = escape_html(" ".join(context.args))
-    header = f"📣 <b>Calling all admins!</b>\n{reason}\n\n"
+    header = f"Calling all admins!\n{reason}\n\n"
     
     MESSAGE_LIMIT = 4000
 
@@ -1360,7 +1455,7 @@ async def tagadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
         except Exception as e:
             print(f"Error sending admin tag chunk {i+1}/{len(message_chunks)}: {e}")
-            await update.message.reply_text(f"⚠️ Couldn't send a part of the admin list (chunk {i+1}).")
+            await update.message.reply_text(f"Couldn't send a part of the admin list (chunk {i+1}).")
 
 
 
@@ -1421,3 +1516,5 @@ def register_group_management(app):
     # Group Management Commands
     app.add_handler(CommandHandler("group_manage", group_manage_command))
     app.add_handler(CallbackQueryHandler(group_manage_callback, pattern="^group_manage_"))
+
+

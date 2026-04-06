@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import html
 import os
 import shutil
@@ -123,6 +123,9 @@ def _format_speed(bps: Optional[float]) -> str:
         return "--"
     return f"{_format_size(int(bps))}/s"
 
+def _progress_bar(percent: float) -> str:
+    filled = int(percent // 10)
+    return "█" * filled + "░" * (10 - filled)
 
 def _format_eta(seconds: Optional[int]) -> str:
     if seconds is None or seconds < 0:
@@ -210,7 +213,6 @@ class MirrorTask:
             self.last_update = now
 
             emoji = STATUS_EMOJIS.get(self.phase, "ℹ️")
-            short_id = self.task_id[:8] if self.task_id else "--"
             lines = [f"{emoji} <b>Status:</b> {self.phase.title()}"]
             if self.name:
                 lines.append(f"<b>Name:</b> <code>{html.escape(self.name)}</code>")
@@ -242,7 +244,7 @@ class MirrorTask:
                     eta = int(remaining / max(self.speed or 1, 1)) if remaining else None
                     lines.append(f"<b>ETA:</b> {_format_eta(eta)}")
                 elif self.phase == "uploading":
-                    lines.append("<i>Uploading to mirror target…</i>")
+                    lines.append("<i>Uploading to the mirror target...</i>")
             elif self.phase == "completed" and self.upload_link:
                 lines.append("<b>Result:</b> Ready")
             elif self.phase == "cancelled":
@@ -253,7 +255,7 @@ class MirrorTask:
                 if self.cancel_reason:
                     lines.append(f"<i>{html.escape(self.cancel_reason)}</i>")
                 else:
-                    lines.append("<i>Waiting for background tasks to stop…</i>")
+                    lines.append("<i>Waiting for background tasks to stop...</i>")
             elif self.phase == "error" and self.error:
                 lines.append(f"<b>Error:</b> {html.escape(self.error)}")
 
@@ -373,11 +375,11 @@ async def mirror_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if not await check_user_approval(user.id):
-        await update.message.reply_text("❌ You are not approved to use this command.")
+        await update.message.reply_text("⚠️ You are not approved to use the mirror feature yet.")
         return
 
     if not await check_command_enabled("mirror"):
-        await update.message.reply_text("❌ The mirror command is currently disabled.")
+        await update.message.reply_text("⚠️ Mirror is currently disabled.")
         return
 
     target_message = update.message.reply_to_message
@@ -413,11 +415,12 @@ async def mirror_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if source is None:
         await update.message.reply_text(
-            "Usage: reply to a file/link/magnet with /mirror, or provide a URL."
+            "<b>Mirror Usage</b>\nReply to a file, link, or magnet with <code>/mirror</code>, or send <code>/mirror &lt;url&gt;</code>.",
+            parse_mode=ParseMode.HTML,
         )
         return
 
-    status = await update.message.reply_text("🟡 Task queued…")
+    status = await update.message.reply_text("<b>Mirror Queue</b>\n🟡 Task queued and waiting to start.", parse_mode=ParseMode.HTML)
 
     task_id = uuid.uuid4().hex
     task = MirrorTask(
@@ -940,53 +943,53 @@ async def cancel_mirror_command(update: Update, context: ContextTypes.DEFAULT_TY
                     task = matches[0]
                 elif len(matches) > 1:
                     await update.message.reply_text(
-                        "Multiple tasks match that ID. Please provide the full task ID."
+                        "⚠️ Multiple tasks match that ID. Please send the full task ID."
                     )
                     return
         if task is None:
-            await update.message.reply_text("No active mirror task found with that ID.")
+            await update.message.reply_text("⚠️ No active mirror task was found with that ID.")
             return
     elif update.message.reply_to_message:
         task = _get_task_by_status_message(update.message.reply_to_message.message_id)
         if task is None:
-            await update.message.reply_text("That message is not an active mirror status update.")
+            await update.message.reply_text("⚠️ That message is not an active mirror status update.")
             return
     else:
         user_tasks = _get_user_active_tasks(user.id)
         if not user_tasks:
-            await update.message.reply_text("You have no active mirror tasks.")
+            await update.message.reply_text("ℹ️ You have no active mirror tasks.")
             return
-        lines = ["<b>Your active mirror tasks:</b>"]
+        lines = ["<b>Your Active Mirror Tasks</b>"]
         for t in user_tasks:
             status = t.phase.title()
             display_name = html.escape(t.name or t.task_id)
-            lines.append(f"- <code>{t.task_id}</code> — {status} ({display_name})")
+            lines.append(f"• <code>{t.task_id}</code> - {status} ({display_name})")
         lines.append("Reply to a status message or use <code>/cancel &lt;task_id&gt;</code> to stop one.")
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
 
     if task.finished:
-        await update.message.reply_text("That task has already finished.")
+        await update.message.reply_text("ℹ️ That mirror task has already finished.")
         return
 
     if user.id not in {task.user_id, settings.admin_chat_id}:
-        await update.message.reply_text("You can only cancel your own mirror tasks.")
+        await update.message.reply_text("🔒 You can only cancel your own mirror tasks.")
         return
 
     display_name = (user.full_name or "").strip() or str(user.id)
     reason = f"Cancelled by {display_name}"
 
     if task.cancel_requested:
-        await update.message.reply_text("Cancellation is already in progress for this task.")
+        await update.message.reply_text("⏳ Cancellation is already in progress for this task.")
         return
 
     cancelled = await _request_task_cancel(task, reason)
     if cancelled:
         await update.message.reply_text(
-            f"Cancellation requested for <code>{task.task_id}</code>.", parse_mode=ParseMode.HTML
+            f"<b>Cancellation Requested</b>\n⏹️ Stopping task <code>{task.task_id}</code>.", parse_mode=ParseMode.HTML
         )
     else:
-        await update.message.reply_text("Unable to cancel that task (it may have already completed).")
+        await update.message.reply_text("⚠️ Unable to cancel that task. It may have already finished.")
 
 
 async def mirror_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1009,7 +1012,7 @@ async def mirror_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if user.id not in {task.user_id, settings.admin_chat_id}:
-        await query.answer("You can only cancel your own mirror tasks.", show_alert=True)
+        await query.answer("You can only cancel your own tasks.", show_alert=True)
         return
 
     if task.cancel_requested:
@@ -1019,7 +1022,7 @@ async def mirror_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
     display_name = (user.full_name or "").strip() or str(user.id)
     reason = f"Cancelled by {display_name}"
     await _request_task_cancel(task, reason)
-    await query.answer("Stopping task…", show_alert=False)
+    await query.answer("Stopping task...", show_alert=False)
 
 
 def register_mirror_handlers(application) -> None:

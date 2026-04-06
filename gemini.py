@@ -1,222 +1,233 @@
-import aiohttp
-import asyncio
+﻿import asyncio
+import base64
+import html
 import json
 import os
 import re
 import time
-import base64
-import html
+from io import BytesIO
 
-from telegram import Update
-from telegram.ext import ContextTypes, Application, CommandHandler
+import aiohttp
+from telegram import InputMediaPhoto, Update
 from telegram.error import BadRequest
+from telegram.ext import ContextTypes
+
+from command_template import CommandSpec, guard_command
+from database import get_collection
 from settings import settings
 
 
-# --- Mock for comm_checker (replace with your actual implementation) ---
-from comm_checker import check_user_approval, check_command_enabled
-
-# --- Constants ---
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={settings.gemini_api_key}"
-CONTEXT_FILE = "user_context.json"
-# CONTEXT_HISTORY_LIMIT = 5 # This will now be managed by token count or number of turns
+TEXT_MODEL = "gemini-2.5-flash"
+IMAGE_MODEL = "gemini-2.5-flash-image"
 MAX_MESSAGE_LENGTH = 4096
+MAX_CAPTION_LENGTH = 1024
 PROGRESS_UPDATE_INTERVAL = 1.5
-MAX_HISTORY_TURNS = 10 # Limit conversation history to 10 turns (user + model)
-
-# Termbin settings
+MAX_HISTORY_TURNS = 10
 TERMBIN_HOST = "termbin.com"
 TERMBIN_PORT = 9999
+USER_CONTEXTS_COLLECTION = get_collection("user_contexts")
+IMAGE_REQUEST_PATTERN = re.compile(
+    r"\b(generate|create|draw|make|design|render|illustrate|edit|change|turn).*\b(image|photo|picture|poster|logo|banner|wallpaper|icon|art)\b",
+    re.IGNORECASE,
+)
 
-# --- Utility Functions ---
 
 def sanitize_response(text: str) -> str:
-    text = re.sub(r'\n\s*\n+', '\n\n', text.strip())
-    return text
+    return re.sub(r'\n\s*\n+', '\n\n', text.strip())
 
-def load_context() -> dict:
-    if os.path.exists(CONTEXT_FILE):
-        try:
-            with open(CONTEXT_FILE, "r") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    return {}
 
-async def save_context_async(context: dict):
-    try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: json.dump(context, open(CONTEXT_FILE, "w"), indent=2))
-    except Exception:
-        pass
+def build_api_url(model_name: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={settings.gemini_api_key}"
+
+
+def wants_image_output(prompt_text: str, has_image_input: bool) -> bool:
+    if not prompt_text:
+        return has_image_input
+    if IMAGE_REQUEST_PATTERN.search(prompt_text):
+        return True
+    return has_image_input and any(
+        keyword in prompt_text.lower()
+        for keyword in ("edit", "change", "turn", "replace", "remove", "make", "generate")
+    )
+
+
+def infer_extension(mime_type: str) -> str:
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+    }.get(mime_type, ".bin")
+
+
+async def load_user_context(user_id: int) -> dict:
+    doc = await USER_CONTEXTS_COLLECTION.find_one({"_id": str(user_id)})
+    if not doc:
+        return {"history": [], "memory": {}}
+    return {
+        "history": doc.get("history", []),
+        "memory": doc.get("memory", {}),
+    }
+
+
+async def save_user_context(user_id: int, user_data: dict) -> None:
+    await USER_CONTEXTS_COLLECTION.update_one(
+        {"_id": str(user_id)},
+        {"$set": {"history": user_data.get("history", []), "memory": user_data.get("memory", {})}},
+        upsert=True,
+    )
+
 
 async def upload_to_termbin(text: str) -> str:
-    """Upload text to termbin and return the URL."""
     try:
-        # Method 1: Try direct socket connection
         reader, writer = await asyncio.open_connection(TERMBIN_HOST, TERMBIN_PORT)
-        
-        # Send the text
-        writer.write(text.encode('utf-8'))
+        writer.write(text.encode("utf-8"))
         await writer.drain()
-        
-        # Close the writing end to signal completion
         writer.write_eof()
-        
-        # Read the response (should be the URL)
         response_data = await asyncio.wait_for(reader.read(1024), timeout=10)
-        
-        # Close the connection
         writer.close()
         await writer.wait_closed()
-        
-        # Decode and clean the response
-        url = response_data.decode('utf-8').strip()
-        
-        # Validate the URL format
-        if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+        url = response_data.decode("utf-8").strip()
+        if url and (url.startswith("https://termbin.com/") or url.startswith("http://termbin.com/")):
             return url
-        else:
-            raise Exception(f"Invalid termbin response: '{url}'")
-            
-    except Exception as e:
-        # Method 2: Try HTTP POST as fallback
+        raise Exception(f"Invalid termbin response: '{url}'")
+    except Exception as exc:
         try:
             return await upload_to_termbin_http(text)
         except Exception as fallback_error:
-            raise Exception(f"Socket method failed: {str(e)}, HTTP method failed: {str(fallback_error)}")
+            raise Exception(f"Socket method failed: {exc}, HTTP method failed: {fallback_error}")
+
 
 async def upload_to_termbin_http(text: str) -> str:
-    """Alternative HTTP method to upload to termbin."""
     try:
-        # Some termbin services accept HTTP POST
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"https://{TERMBIN_HOST}",
-                data=text.encode('utf-8'),
-                headers={'Content-Type': 'text/plain'},
-                timeout=10
+                data=text.encode("utf-8"),
+                headers={"Content-Type": "text/plain"},
+                timeout=10,
             ) as response:
                 if response.status == 200:
-                    url = await response.text()
-                    url = url.strip()
-                    if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+                    url = (await response.text()).strip()
+                    if url and (url.startswith("https://termbin.com/") or url.startswith("http://termbin.com/")):
                         return url
-                    else:
-                        raise Exception(f"Invalid HTTP response: '{url}'")
-                else:
-                    raise Exception(f"HTTP request failed with status {response.status}")
-    except Exception as e:
-        # Method 3: Try subprocess as last resort
+                    raise Exception(f"Invalid HTTP response: '{url}'")
+                raise Exception(f"HTTP request failed with status {response.status}")
+    except Exception:
         return await upload_to_termbin_subprocess(text)
 
+
 async def upload_to_termbin_subprocess(text: str) -> str:
-    """Fallback method using subprocess to upload to termbin."""
     try:
-        import subprocess
         import tempfile
-        import os
-        
-        # Create a temporary file to avoid shell escaping issues
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as tmp_file:
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as tmp_file:
             tmp_file.write(text)
             tmp_file_path = tmp_file.name
-        
+
         try:
-            # Use cat and nc command as shown in termbin documentation
-            cmd = f"cat {tmp_file_path} | nc termbin.com 9999"
-            
-            # Run the command asynchronously
-            process = await asyncio.create_subprocess_shell(
-                cmd,
+            process = await asyncio.create_subprocess_exec(
+                "nc",
+                TERMBIN_HOST,
+                str(TERMBIN_PORT),
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
-            
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
-            
+            stdout, stderr = await asyncio.wait_for(process.communicate(input=text.encode("utf-8")), timeout=15)
             if process.returncode == 0:
-                url = stdout.decode('utf-8').strip()
-                if url and (url.startswith('https://termbin.com/') or url.startswith('http://termbin.com/')):
+                url = stdout.decode("utf-8").strip()
+                if url and (url.startswith("https://termbin.com/") or url.startswith("http://termbin.com/")):
                     return url
-                else:
-                    raise Exception(f"Invalid subprocess response: '{url}'")
-            else:
-                raise Exception(f"nc command failed: {stderr.decode('utf-8')}")
-                
+                raise Exception(f"Invalid subprocess response: '{url}'")
+            raise Exception(f"nc command failed: {stderr.decode('utf-8')}")
         finally:
-            # Clean up temporary file
             if os.path.exists(tmp_file_path):
                 os.remove(tmp_file_path)
-            
-    except Exception as e:
-        raise Exception(f"Subprocess upload failed: {str(e)}")
+    except Exception as exc:
+        raise Exception(f"Subprocess upload failed: {exc}")
 
-async def get_gemini_response(conversation_history: list, file_data: str = None, file_mime_type: str = None) -> tuple[str, float]:
+
+async def get_gemini_response(
+    conversation_history: list,
+    *,
+    file_data: str | None = None,
+    file_mime_type: str | None = None,
+    generate_image: bool = False,
+) -> tuple[dict, float]:
     start = time.time()
 
-    # The Gemini API expects 'contents' to be a list of messages
-    # Each message has a 'role' (user/model) and 'parts')
-    # The last message in 'contents' should be the current user's prompt
-    
-    # Construct the current user's message parts
     current_user_parts = []
     if conversation_history and conversation_history[-1].get("parts"):
-        # Assuming the last message in history is the current user's text prompt
         current_user_parts.extend(conversation_history[-1]["parts"])
 
     if file_data and file_mime_type:
-        current_user_parts.append({
-            "inlineData": {"mimeType": file_mime_type, "data": file_data}
-        })
-    
-    # Create the full payload with conversation history
-    payload = {
-        "contents": conversation_history[:-1] + [{"role": "user", "parts": current_user_parts}]
-    }
-    
+        current_user_parts.append({"inlineData": {"mimeType": file_mime_type, "data": file_data}})
+
+    model_name = IMAGE_MODEL if generate_image else TEXT_MODEL
+    payload = {"contents": conversation_history[:-1] + [{"role": "user", "parts": current_user_parts}]}
+    if generate_image:
+        payload["generationConfig"] = {"responseModalities": ["TEXT", "IMAGE"]}
+
     headers = {"Content-Type": "application/json"}
 
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=60) as resp:
+            async with session.post(build_api_url(model_name), json=payload, headers=headers, timeout=120) as resp:
                 if resp.status != 200:
                     try:
                         error_details = await resp.text()
                     except Exception:
                         error_details = "Unknown error details"
-                    return f"⚠️ Gemini API error: {resp.status} - {error_details}", 0.0
-                
+                    return {"text": f"Gemini API error: {resp.status} - {error_details}", "images": []}, 0.0
+
                 data = await resp.json()
-                
                 candidates = data.get("candidates")
                 if not candidates or not isinstance(candidates, list) or not candidates[0].get("content"):
                     safety_ratings = data.get("promptFeedback", {}).get("safetyRatings")
                     if safety_ratings:
                         for rating in safety_ratings:
                             if rating.get("blockReason"):
-                                return f"⚠️ Gemini blocked response due to safety reasons: {rating.get('category')} - {rating.get('blockReason')}", 0.0
-                    return f"⚠️ Unexpected Gemini response format or no content: {json.dumps(data, indent=2)}", 0.0
-                
-                reply = candidates[0]["content"]["parts"][0]["text"]
+                                return {
+                                    "text": f"Gemini blocked the response for safety reasons: {rating.get('category')} - {rating.get('blockReason')}",
+                                    "images": [],
+                                }, 0.0
+                    return {"text": f"Unexpected Gemini response format or no content: {json.dumps(data, indent=2)}", "images": []}, 0.0
+
+                parts = candidates[0]["content"].get("parts", [])
+                text_parts: list[str] = []
+                image_parts: list[dict] = []
+                for part in parts:
+                    if part.get("text"):
+                        text_parts.append(part["text"])
+                    inline_data = part.get("inlineData") or part.get("inline_data")
+                    if inline_data and inline_data.get("data") and inline_data.get("mimeType", "").startswith("image/"):
+                        try:
+                            image_parts.append(
+                                {
+                                    "mime_type": inline_data["mimeType"],
+                                    "data": base64.b64decode(inline_data["data"]),
+                                }
+                            )
+                        except Exception:
+                            continue
+
                 elapsed = time.time() - start
-                return reply.strip(), elapsed
+                return {"text": "\n\n".join(text_parts).strip(), "images": image_parts}, elapsed
         except aiohttp.client_exceptions.ClientConnectorError:
-            return "⚠️ Network error connecting to Gemini API. Please check your internet connection.", 0.0
+            return {"text": "Network error connecting to Gemini API. Please check your internet connection.", "images": []}, 0.0
         except asyncio.TimeoutError:
-            return "⚠️ Gemini API request timed out. Please try again.", 0.0
-        except Exception as e:
-            return f"⚠️ An unexpected error occurred while contacting Gemini: {str(e)}", 0.0
+            return {"text": "Gemini API request timed out. Please try again.", "images": []}, 0.0
+        except Exception as exc:
+            return {"text": f"An unexpected error occurred while contacting Gemini: {exc}", "images": []}, 0.0
+
 
 async def process_file(file_path: str, file_name: str) -> tuple[str, str]:
     try:
-        with open(file_path, "rb") as f:
-            binary_data = f.read()
+        with open(file_path, "rb") as file_handle:
+            binary_data = file_handle.read()
             base64_data = base64.b64encode(binary_data).decode("utf-8")
-        
+
         extension = os.path.splitext(file_name)[1].lower()
-        
         mime_type_map = {
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
@@ -227,42 +238,55 @@ async def process_file(file_path: str, file_name: str) -> tuple[str, str]:
             ".txt": "text/plain",
         }
         mime_type = mime_type_map.get(extension, "application/octet-stream")
-        
         return base64_data, mime_type
-    except Exception as e:
-        return f"Error processing file: {str(e)}", None
+    except Exception as exc:
+        return f"Error processing file: {exc}", None
 
 
-# --- Command Handler ---
+async def send_generated_images(context: ContextTypes.DEFAULT_TYPE, chat_id: int, images: list[dict], caption_html: str | None) -> None:
+    if not images:
+        return
+
+    if len(images) == 1:
+        image = images[0]
+        image_file = BytesIO(image["data"])
+        image_file.name = f"gemini_image{infer_extension(image['mime_type'])}"
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_file,
+            caption=caption_html[:MAX_CAPTION_LENGTH] if caption_html else None,
+            parse_mode="HTML" if caption_html else None,
+        )
+        return
+
+    media_group = []
+    for index, image in enumerate(images[:10]):
+        image_file = BytesIO(image["data"])
+        image_file.name = f"gemini_image_{index + 1}{infer_extension(image['mime_type'])}"
+        media_group.append(
+            InputMediaPhoto(
+                media=image_file,
+                caption=caption_html[:MAX_CAPTION_LENGTH] if index == 0 and caption_html else None,
+                parse_mode="HTML" if index == 0 and caption_html else None,
+            )
+        )
+    await context.bot.send_media_group(chat_id=chat_id, media=media_group)
+
 
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
-    user_id = str(update.effective_user.id)
-    
-    user_id = update.effective_user.id # Get as int directly
+    user_id = update.effective_user.id
 
-    # Check user approval
-    if not await check_user_approval(user_id):
-        await message.reply_text("🔒 You're not approved to use this command.")
-        return
-    
-    # Check if command is enabled
-    if not await check_command_enabled('ai'):
-        await message.reply_text("❌ AI command is currently disabled.")
+    if not await guard_command(update, CommandSpec(name="ai", disabled_message="⚠️ AI is currently disabled.")):
         return
 
-    # Load user context
-    user_contexts = load_context()
-    user_data = user_contexts.get(str(user_id), {"history": [], "memory": {}})
+    user_data = await load_user_context(user_id)
     conversation_history = user_data["history"]
-    
     replied_message = message.reply_to_message
     file_data = None
     mime_type = None
-    
     prompt_text = " ".join(context.args) if context.args else ""
 
-    # Handle file attachments
     if replied_message:
         file = None
         file_name = None
@@ -274,7 +298,7 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         elif replied_message.photo:
             file = replied_message.photo[-1]
             file_name = "temp_image.jpg"
-        
+
         if file:
             try:
                 file_obj = await context.bot.get_file(file.file_id)
@@ -282,15 +306,19 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 await file_obj.download_to_drive(temp_file_path)
 
                 file_data, mime_type = await process_file(temp_file_path, file_name)
-                
-                if "Error" in file_data: # process_file returns error string on failure
-                    await message.reply_text(file_data)
+                if "Error" in file_data:
+                    await message.reply_text(
+                        f"<b>File Processing Failed</b>\n<code>{html.escape(file_data)}</code>",
+                        parse_mode="HTML",
+                    )
                     return
-                
                 if not prompt_text:
                     prompt_text = "Describe the content of this file."
-            except Exception as e:
-                await message.reply_text(f"❌ Failed to process the attached file: {e}")
+            except Exception as exc:
+                await message.reply_text(
+                    f"<b>Attachment Processing Failed</b>\n<code>{html.escape(str(exc))}</code>",
+                    parse_mode="HTML",
+                )
                 return
             finally:
                 if temp_file_path and os.path.exists(temp_file_path):
@@ -298,33 +326,30 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         elif replied_message.text and not prompt_text:
             prompt_text = replied_message.text
 
-
     if not prompt_text and not (file_data and mime_type):
-        await message.reply_text("Try: `/ai what is Python?` or reply to a file/image with a query.")
+        await message.reply_text(
+            "<b>How To Use AI</b>\nSend <code>/ai your question</code> or reply to a file or image with <code>/ai</code>.\nTo generate images, ask clearly for an image, poster, logo, illustration, or edit.",
+            parse_mode="HTML",
+        )
         return
-    
-    progress_msg = await message.reply_text("🧠 Thinking...")
-    
-    # Add current user message to history
+
+    progress_msg = await message.reply_text("<b>AI Assistant</b>\n🤖 Thinking...", parse_mode="HTML")
+
     user_message_parts = []
     if prompt_text:
         user_message_parts.append({"text": prompt_text})
     if file_data and mime_type:
         user_message_parts.append({"inlineData": {"mimeType": mime_type, "data": file_data}})
-    
-    # Ensure there's at least one part in the user message
+
     if not user_message_parts:
-        await message.reply_text("❌ No valid input provided for Gemini.")
+        await message.reply_text("⚠️ I couldn't find any valid input for Gemini.")
         return
 
+    generate_image = wants_image_output(prompt_text, bool(file_data and mime_type and mime_type.startswith("image/")))
     conversation_history.append({"role": "user", "parts": user_message_parts})
-
-    # Truncate history if it exceeds MAX_HISTORY_TURNS
-    # Each turn consists of a user message and a model message.
-    # So, MAX_HISTORY_TURNS * 2 messages in total.
     if len(conversation_history) > MAX_HISTORY_TURNS * 2:
         conversation_history = conversation_history[-(MAX_HISTORY_TURNS * 2):]
-    
+
     dots = ["", ".", "..", "..."]
     dot_index = 0
     start_time = time.time()
@@ -334,61 +359,76 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         while True:
             elapsed = time.time() - start_time
             try:
-                await progress_msg.edit_text(f"Processing{dots[dot_index]} ({elapsed:.1f}s)")
+                status_line = "🖼️ Generating image" if generate_image else "🤖 Thinking"
+                await progress_msg.edit_text(
+                    f"<b>AI Assistant</b>\n{status_line}{dots[dot_index]}\n⏱️ {elapsed:.1f}s",
+                    parse_mode="HTML",
+                )
             except BadRequest:
-                break 
+                break
             dot_index = (dot_index + 1) % len(dots)
             await asyncio.sleep(PROGRESS_UPDATE_INTERVAL)
 
     progress_task = asyncio.create_task(update_progress())
 
     try:
-        response_text, elapsed = await get_gemini_response(
+        response, elapsed = await get_gemini_response(
             conversation_history=conversation_history,
-            file_data=file_data, # Pass file data for the *current* turn
-            file_mime_type=mime_type
+            file_data=file_data,
+            file_mime_type=mime_type,
+            generate_image=generate_image,
         )
-        
-        # Prepare the response for display
-        escaped_html = html.escape(response_text)
-        sanitized_reply = sanitize_response(escaped_html)
-        
-        # Check if the response (with timing info) will fit in a Telegram message
-        timing_info = f"\n\n✨ Generated in {elapsed:.1f}s"
-        full_message = f"{sanitized_reply}{timing_info}"
-        
-        if len(full_message) > MAX_MESSAGE_LENGTH:
-            # Response is too long for Telegram, upload to termbin
-            try:
-                await progress_msg.edit_text(f"📤 Response is long ({len(response_text)} chars), uploading to termbin...")
-                termbin_url = await upload_to_termbin(response_text)
-                
-                # Send ONLY the termbin link (no preview text)
-                final_message = f"📋 <b>Full response:</b> {termbin_url}{timing_info}"
-                
-                await progress_msg.edit_text(final_message, parse_mode="HTML")
-                
-            except Exception as e:
-                # Fall back to truncation if termbin fails
-                truncated_reply = sanitized_reply[:MAX_MESSAGE_LENGTH - 200] + f"...\n\n⚠️ Response was truncated (termbin upload failed: {str(e)})"
-                await progress_msg.edit_text(f"{truncated_reply}{timing_info}", parse_mode="HTML")
+
+        response_text = response.get("text", "")
+        generated_images = response.get("images", [])
+        timing_info = f"\n\n<i>Generated in {elapsed:.1f}s</i>"
+
+        if generated_images:
+            caption_html = None
+            if response_text:
+                caption_html = sanitize_response(html.escape(response_text)) + timing_info
+
+            await progress_msg.edit_text(
+                "<b>AI Assistant</b>\n🖼️ Uploading the generated image...",
+                parse_mode="HTML",
+            )
+            await send_generated_images(context, update.effective_chat.id, generated_images, caption_html)
+
+            if response_text and len(caption_html or "") > MAX_CAPTION_LENGTH:
+                await progress_msg.edit_text(
+                    sanitize_response(html.escape(response_text))[: MAX_MESSAGE_LENGTH - 80] + timing_info,
+                    parse_mode="HTML",
+                )
+            else:
+                await progress_msg.delete()
         else:
-            # Response fits in Telegram message, show it normally
-            await progress_msg.edit_text(full_message, parse_mode="HTML")
-        
-        # Add model's response to history
-        conversation_history.append({"role": "model", "parts": [{"text": response_text}]})
-        
-        # Save updated context
-        user_data["history"] = conversation_history
-        user_contexts[str(user_id)] = user_data
-        asyncio.create_task(save_context_async(user_contexts))
-        
+            escaped_html = html.escape(response_text)
+            sanitized_reply = sanitize_response(escaped_html)
+            full_message = f"{sanitized_reply}{timing_info}"
+
+            if len(full_message) > MAX_MESSAGE_LENGTH:
+                try:
+                    await progress_msg.edit_text(
+                        f"<b>AI Assistant</b>\n📦 The reply is long ({len(response_text)} characters). Uploading the full result...",
+                        parse_mode="HTML",
+                    )
+                    termbin_url = await upload_to_termbin(response_text)
+                    final_message = f"<b>Full Response Uploaded</b>\n🔗 {html.escape(termbin_url)}{timing_info}"
+                    await progress_msg.edit_text(final_message, parse_mode="HTML")
+                except Exception as exc:
+                    truncated_reply = sanitized_reply[: MAX_MESSAGE_LENGTH - 220] + f"...\n\n<i>Response was truncated because upload failed: {html.escape(str(exc))}</i>"
+                    await progress_msg.edit_text(f"{truncated_reply}{timing_info}", parse_mode="HTML")
+            else:
+                await progress_msg.edit_text(full_message, parse_mode="HTML")
+
+        history_parts = []
+        if response_text:
+            history_parts.append({"text": response_text})
+        elif generated_images:
+            history_parts.append({"text": "[Generated image response]"})
+        if history_parts:
+            conversation_history.append({"role": "model", "parts": history_parts})
+            user_data["history"] = conversation_history
+            await save_user_context(user_id, user_data)
     finally:
         progress_task.cancel()
-
-# --- Register Handlers ---
-
-def register_gemini_handlers(application):
-    """Registers the /ai command handler with the Telegram Bot Application."""
-    application.add_handler(CommandHandler("ai", ai_command))
