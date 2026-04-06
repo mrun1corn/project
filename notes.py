@@ -1,4 +1,5 @@
-﻿from functools import wraps
+﻿import html
+from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -190,7 +191,7 @@ async def keep_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_notes(chat_id, notes)
     note_type = "private" if private_chat else "group"
     await update.message.reply_text(
-        f"✅ Saved {note_type} note <code>{name}</code>.",
+        f"✅ Saved {note_type} note <code>{html.escape(name)}</code>.",
         parse_mode="HTML",
     )
 
@@ -207,7 +208,7 @@ async def show_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = ["<b>Saved Notes</b>"]
-    lines.extend(f"• <code>#{name}</code>" for name in names)
+    lines.extend(f"• <code>#{html.escape(name)}</code>" for name in names)
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
@@ -235,7 +236,7 @@ async def get_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        f"⚠️ Note <code>{name}</code> was not found.",
+        f"⚠️ Note <code>{html.escape(name)}</code> was not found.",
         parse_mode="HTML",
     )
 
@@ -271,11 +272,11 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if deleted:
         await save_notes(update.effective_chat.id, notes)
-        await update.message.reply_text(f"🗑️ Deleted note <code>{name}</code>.", parse_mode="HTML")
+        await update.message.reply_text(f"🗑️ Deleted note <code>{html.escape(name)}</code>.", parse_mode="HTML")
         return
 
     await update.message.reply_text(
-        f"⚠️ Note <code>{name}</code> was not found or you do not have permission to remove it.",
+        f"⚠️ Note <code>{html.escape(name)}</code> was not found or you do not have permission to remove it.",
         parse_mode="HTML",
     )
 

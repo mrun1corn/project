@@ -203,6 +203,7 @@ async def safe_edit_message(message: Message | None, text: str, **kwargs) -> Non
     if not message:
         return
     try:
+        kwargs.setdefault("parse_mode", "HTML")
         await message.edit_text(text, **kwargs)
     except Exception:
         pass
