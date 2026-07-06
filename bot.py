@@ -46,10 +46,7 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
         return
 
     if isinstance(error, PyMongoError):
-        await message.reply_text(
-            "<b>Database Warning</b>\nThe configuration database is currently unavailable. Some commands may fall back to default behavior until the connection is restored.",
-            parse_mode="HTML",
-        )
+        # Database issues are handled by transparent local JSON fallback.
         return
 
     await message.reply_text(
@@ -79,7 +76,7 @@ async def post_init(application):
                     chat_id=settings.admin_chat_id,
                     text=(
                         "<b>MongoDB Warning</b>\n"
-                        "⚠️ Preflight failed. The bot will use in-memory defaults until the database is reachable.\n\n"
+                        "⚠️ Preflight failed. The bot will use local JSON fallback files until the database is reachable.\n\n"
                         f"<code>{exc}</code>"
                     ),
                     parse_mode="HTML",

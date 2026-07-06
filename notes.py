@@ -10,6 +10,7 @@ from database import get_collection
 from group_management import error_handler, is_user_admin
 from settings import settings
 from toggle_ui import build_toggle_keyboard
+from json_fallback import load_json, save_json
 
 
 NOTES_COLLECTION = get_collection("notes")
@@ -18,31 +19,53 @@ NOTES_COMMANDS = get_default_notes_commands()
 
 
 async def load_notes(chat_id: int) -> dict:
-    doc = await NOTES_COLLECTION.find_one({"_id": chat_id})
-    if not doc:
-        return {"group_notes": {}, "user_notes": {}}
-    data = {k: v for k, v in doc.items() if k != "_id"}
+    try:
+        doc = await NOTES_COLLECTION.find_one({"_id": chat_id})
+        if not doc:
+            return {"group_notes": {}, "user_notes": {}}
+        data = {k: v for k, v in doc.items() if k != "_id"}
+    except Exception as exc:
+        print(f"Failed to load notes for {chat_id} from database, falling back to JSON: {exc}")
+        data = load_json(f"notes/{chat_id}.json", {"group_notes": {}, "user_notes": {}})
+
     data.setdefault("group_notes", {})
     data.setdefault("user_notes", {})
     return data
 
 
 async def save_notes(chat_id: int, notes: dict) -> None:
-    await NOTES_COLLECTION.update_one({"_id": chat_id}, {"$set": notes}, upsert=True)
+    try:
+        await NOTES_COLLECTION.update_one({"_id": chat_id}, {"$set": notes}, upsert=True)
+    except Exception as exc:
+        print(f"Failed to save notes for {chat_id} to database, falling back to JSON: {exc}")
+    save_json(f"notes/{chat_id}.json", notes)
 
 
 async def load_notes_command_states(chat_id: int) -> dict:
-    doc = await NOTES_COMMANDS_COLLECTION.find_one({"_id": chat_id})
-    if not doc:
-        return NOTES_COMMANDS.copy()
-    stored = doc.get("commands", {})
+    try:
+        doc = await NOTES_COMMANDS_COLLECTION.find_one({"_id": chat_id})
+        if not doc:
+            return NOTES_COMMANDS.copy()
+        stored = doc.get("commands", {})
+    except Exception as exc:
+        print(f"Failed to load notes command states for {chat_id} from database, falling back to JSON: {exc}")
+        all_states = load_json("notes_command_states.json", {})
+        stored = all_states.get("notes_commands", {}).get(str(chat_id), {})
+
     states = NOTES_COMMANDS.copy()
     states.update({name: bool(value) for name, value in stored.items() if name in NOTES_COMMANDS})
     return states
 
 
 async def save_notes_command_states(chat_id: int, states: dict) -> None:
-    await NOTES_COMMANDS_COLLECTION.update_one({"_id": chat_id}, {"$set": {"commands": states}}, upsert=True)
+    try:
+        await NOTES_COMMANDS_COLLECTION.update_one({"_id": chat_id}, {"$set": {"commands": states}}, upsert=True)
+    except Exception as exc:
+        print(f"Failed to save notes command states for {chat_id} to database, falling back to JSON: {exc}")
+    
+    all_states = load_json("notes_command_states.json", {})
+    all_states.setdefault("notes_commands", {})[str(chat_id)] = states
+    save_json("notes_command_states.json", all_states)
 
 
 def notes_command_enabled_check(command_name: str):

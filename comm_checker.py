@@ -11,6 +11,7 @@ from command_registry import (
 )
 from database import get_collection
 from settings import settings
+from json_fallback import load_json, save_json
 
 
 GLOBAL_COMMAND_DEFAULTS = get_default_global_commands()
@@ -72,12 +73,26 @@ async def _ensure_config() -> tuple[Dict[str, bool], Set[int]]:
         return merged_states, approved_users
     except Exception as exc:
         _config_backend_error = str(exc)
-        print(f"Config backend unavailable, falling back to in-memory defaults: {exc}")
-        fallback_states = GLOBAL_COMMAND_DEFAULTS.copy()
-        fallback_approved_users: Set[int] = {settings.admin_chat_id} if settings.admin_chat_id else set()
-        _command_states_cache = fallback_states
-        _approved_users_cache = fallback_approved_users
-        return fallback_states, fallback_approved_users
+        print(f"Config backend unavailable, falling back to JSON: {exc}")
+        
+        states_data = load_json("command_states.json", {})
+        stored_states = states_data.get("command_states", {})
+        merged_states = GLOBAL_COMMAND_DEFAULTS.copy()
+        merged_states.update({k: bool(v) for k, v in stored_states.items() if k in GLOBAL_COMMAND_DEFAULTS})
+        
+        raw_approved_users = load_json("approved_users.json", [])
+        approved_users = set()
+        for value in raw_approved_users:
+            try:
+                approved_users.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        if not approved_users and settings.admin_chat_id:
+            approved_users.add(settings.admin_chat_id)
+
+        _command_states_cache = merged_states
+        _approved_users_cache = approved_users
+        return merged_states, approved_users
 
 
 async def _set_command_state(command: str, enabled: bool) -> None:
@@ -91,6 +106,7 @@ async def _set_command_state(command: str, enabled: bool) -> None:
         )
     except Exception as exc:
         print(f"Failed to persist command state for {command}: {exc}")
+    save_json("command_states.json", {"command_states": states})
 
 
 async def _add_approved_user(user_id: int) -> None:
@@ -105,6 +121,7 @@ async def _add_approved_user(user_id: int) -> None:
         )
     except Exception as exc:
         print(f"Failed to persist approved user {user_id}: {exc}")
+    save_json("approved_users.json", list(approved))
 
 
 async def _remove_approved_user(user_id: int) -> None:
@@ -119,6 +136,8 @@ async def _remove_approved_user(user_id: int) -> None:
         )
     except Exception as exc:
         print(f"Failed to persist revoked user {user_id}: {exc}")
+    save_json("approved_users.json", list(approved))
+
 
 
 def _format_command_overview(include_status: bool = False) -> str:

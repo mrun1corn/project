@@ -88,6 +88,7 @@ def bot_has_permissions(permissions: list[str]):
 from settings import settings
 from database import get_collection
 from toggle_ui import build_toggle_keyboard
+from json_fallback import load_json, save_json
 
 GROUPS_COLLECTION = get_collection("group_data")
 GROUP_COMMANDS_COLLECTION = get_collection("group_management_command_states")
@@ -95,22 +96,34 @@ GROUP_COMMANDS = get_default_group_commands()
 
 
 async def load_group_command_states(chat_id: int) -> dict:
-    doc = await GROUP_COMMANDS_COLLECTION.find_one({"_id": chat_id})
-    if not doc:
-        return GROUP_COMMANDS.copy()
-    stored = doc.get("commands", {})
+    try:
+        doc = await GROUP_COMMANDS_COLLECTION.find_one({"_id": chat_id})
+        if not doc:
+            return GROUP_COMMANDS.copy()
+        stored = doc.get("commands", {})
+    except Exception as exc:
+        print(f"Failed to load group command states for {chat_id} from database, falling back to JSON: {exc}")
+        all_states = load_json("group_management_command_states.json", {})
+        stored = all_states.get("group_management_commands", {}).get(str(chat_id), {})
+
     states = GROUP_COMMANDS.copy()
     states.update({name: bool(value) for name, value in stored.items() if name in GROUP_COMMANDS})
     return states
 
 
 async def save_group_command_states(chat_id: int, states: dict) -> None:
-    await GROUP_COMMANDS_COLLECTION.update_one(
-        {"_id": chat_id},
-        {"$set": {"commands": states}},
-        upsert=True,
-    )
-
+    try:
+        await GROUP_COMMANDS_COLLECTION.update_one(
+            {"_id": chat_id},
+            {"$set": {"commands": states}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"Failed to save group command states for {chat_id} to database, falling back to JSON: {exc}")
+    
+    all_states = load_json("group_management_command_states.json", {})
+    all_states.setdefault("group_management_commands", {})[str(chat_id)] = states
+    save_json("group_management_command_states.json", all_states)
 
 def group_management_command_enabled_check(command_name: str):
     def decorator(func):
@@ -291,7 +304,13 @@ async def load_group(chat_id: int) -> dict:
     if chat_id in _group_cache:
         return _group_cache[chat_id]
 
-    doc = await GROUPS_COLLECTION.find_one({"_id": chat_id})
+    doc = None
+    try:
+        doc = await GROUPS_COLLECTION.find_one({"_id": chat_id})
+    except Exception as exc:
+        print(f"Failed to load group {chat_id} from database, falling back to JSON: {exc}")
+        doc = load_json(f"group_data/{chat_id}.json", None)
+
     group_data = DEFAULT_GROUP_DATA.copy()
     if doc:
         doc_data = {k: v for k, v in doc.items() if k != "_id"}
@@ -305,7 +324,11 @@ async def load_group(chat_id: int) -> dict:
 async def save_group(chat_id: int, data: dict) -> None:
     _group_cache[chat_id] = data
     to_store = data.copy()
-    await GROUPS_COLLECTION.update_one({"_id": chat_id}, {"$set": to_store}, upsert=True)
+    try:
+        await GROUPS_COLLECTION.update_one({"_id": chat_id}, {"$set": to_store}, upsert=True)
+    except Exception as exc:
+        print(f"Failed to save group {chat_id} to database, falling back to JSON: {exc}")
+    save_json(f"group_data/{chat_id}.json", to_store)
 
 _admin_cache = {}
 _ADMIN_CACHE_TIMEOUT = 60 # seconds

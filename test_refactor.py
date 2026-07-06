@@ -146,5 +146,59 @@ class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
         # Verify message delete was not called
         mock_update.message.delete.assert_not_called()
 
+class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
+    @patch('comm_checker.load_json')
+    @patch('comm_checker.save_json')
+    async def test_comm_checker_fallback(self, mock_save_json, mock_load_json):
+        # We trigger database connection failure in _ensure_config
+        from comm_checker import CONFIG_COLLECTION, _ensure_config
+        
+        # Reset caches
+        import comm_checker
+        comm_checker._command_states_cache = None
+        comm_checker._approved_users_cache = None
+        
+        # Mock find_one to raise Exception (unreachable database)
+        CONFIG_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
+        
+        # Mock load_json returns
+        mock_load_json.side_effect = lambda path, default: {
+            "command_states.json": {"command_states": {"ai": False}},
+            "approved_users.json": [9999]
+        }.get(path, default)
+        
+        states, approved = await _ensure_config()
+        
+        # Assert fallback worked and read from JSON
+        self.assertFalse(states["ai"])
+        self.assertIn(9999, approved)
+
+    @patch('group_management.load_json')
+    @patch('group_management.save_json')
+    async def test_group_management_fallback(self, mock_save_json, mock_load_json):
+        # Reset cache in group_management
+        import group_management
+        group_management._group_cache = {}
+        group_management.GROUPS_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
+        
+        # Mock load_json
+        mock_load_json.return_value = {"locks": {"audio": True}}
+        
+        group_data = await group_management.load_group(12345)
+        self.assertTrue(group_data["locks"]["audio"])
+        mock_load_json.assert_called_with("group_data/12345.json", None)
+
+    @patch('notes.load_json')
+    @patch('notes.save_json')
+    async def test_notes_fallback(self, mock_save_json, mock_load_json):
+        import notes
+        notes.NOTES_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
+        
+        # Mock load_json
+        mock_load_json.return_value = {"group_notes": {"hello": "world"}, "user_notes": {}}
+        
+        notes_data = await notes.load_notes(12345)
+        self.assertEqual(notes_data["group_notes"]["hello"], "world")
+        mock_load_json.assert_called_with("notes/12345.json", {"group_notes": {}, "user_notes": {}})
 if __name__ == '__main__':
     unittest.main()
