@@ -1,7 +1,7 @@
-﻿from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
-from command_template import CommandSpec, guard_command
+from src.core.guard import CommandSpec, guard_command
 
 
 HELP_TOPICS = {

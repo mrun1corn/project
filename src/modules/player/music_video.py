@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 
@@ -6,8 +6,8 @@ import yt_dlp
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from command_template import CommandSpec, guard_command
-from media_utils import (
+from src.core.guard import CommandSpec, guard_command
+from src.core.media import (
     DOWNLOAD_SEMAPHORE,
     MAX_TELEGRAM_FILE_SIZE,
     UPLOAD_SEMAPHORE,

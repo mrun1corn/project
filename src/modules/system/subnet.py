@@ -1,4 +1,4 @@
-﻿import ipaddress
+import ipaddress
 
 from telegram import Update
 from telegram.ext import ContextTypes

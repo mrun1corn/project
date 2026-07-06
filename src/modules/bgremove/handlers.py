@@ -6,8 +6,8 @@ import aiohttp
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from command_template import CommandSpec, guard_command
-from settings import settings
+from src.core.guard import CommandSpec, guard_command
+from src.core.config import settings
 
 
 async def remove_bg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

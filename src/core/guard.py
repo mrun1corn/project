@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 
 from telegram import Update
 
-from comm_checker import check_command_enabled, check_user_approval
-from settings import settings
+from src.core.security import check_command_enabled, check_user_approval
+from src.core.config import settings
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-﻿import html
+import html
 import os
 import platform
 import subprocess
@@ -10,7 +10,7 @@ import speedtest as speedtest_lib
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from command_template import CommandSpec, guard_command
+from src.core.guard import CommandSpec, guard_command
 
 
 bot_start_time = time.time()

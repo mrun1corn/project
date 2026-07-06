@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import base64
 import html
 import json
@@ -12,9 +12,9 @@ from telegram import InputMediaPhoto, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from command_template import CommandSpec, guard_command
-from database import get_collection
-from settings import settings
+from src.core.guard import CommandSpec, guard_command
+from src.core.database import get_collection
+from src.core.config import settings
 
 
 TEXT_MODEL = "gemini-2.5-flash"

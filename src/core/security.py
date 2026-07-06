@@ -1,17 +1,17 @@
-﻿from functools import wraps
+from functools import wraps
 from typing import Dict, Set
 
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from command_registry import (
+from src.core.registry import (
     get_default_global_commands,
     get_default_group_commands,
     get_default_notes_commands,
 )
-from database import get_collection
-from settings import settings
-from json_fallback import load_json, save_json
+from src.core.database import get_collection
+from src.core.config import settings
+from src.core.fallback import load_json, save_json
 
 
 GLOBAL_COMMAND_DEFAULTS = get_default_global_commands()

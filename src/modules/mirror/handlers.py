@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import html
 import os
 import shutil
@@ -21,8 +21,8 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
-from settings import settings
-from comm_checker import check_user_approval, check_command_enabled
+from src.core.config import settings
+from src.core.security import check_user_approval, check_command_enabled
 
 
 ALLOWED_TARGETS = {"pixeldrain", "gofile"}

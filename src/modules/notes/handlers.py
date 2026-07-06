@@ -1,16 +1,16 @@
-﻿import html
+import html
 from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from command_registry import get_default_notes_commands
-from database import get_collection
-from group_management import error_handler, is_user_admin
-from settings import settings
-from toggle_ui import build_toggle_keyboard
-from json_fallback import load_json, save_json
+from src.core.registry import get_default_notes_commands
+from src.core.database import get_collection
+from src.modules.group.handlers import error_handler, is_user_admin
+from src.core.config import settings
+from src.core.ui import build_toggle_keyboard
+from src.core.fallback import load_json, save_json
 
 
 NOTES_COLLECTION = get_collection("notes")

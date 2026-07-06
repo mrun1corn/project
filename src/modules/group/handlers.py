@@ -6,7 +6,7 @@ from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from functools import wraps
-from command_registry import get_default_group_commands
+from src.core.registry import get_default_group_commands
 
 # --- Constants ---
 ADMIN_ONLY_MSG = "🔒 You must be an admin to use this command."
@@ -85,10 +85,10 @@ def bot_has_permissions(permissions: list[str]):
         return wrapped
     return decorator
 
-from settings import settings
-from database import get_collection
-from toggle_ui import build_toggle_keyboard
-from json_fallback import load_json, save_json
+from src.core.config import settings
+from src.core.database import get_collection
+from src.core.ui import build_toggle_keyboard
+from src.core.fallback import load_json, save_json
 
 GROUPS_COLLECTION = get_collection("group_data")
 GROUP_COMMANDS_COLLECTION = get_collection("group_management_command_states")

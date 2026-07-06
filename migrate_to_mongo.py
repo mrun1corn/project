@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from settings import settings  # noqa: F401 to ensure dotenv is loaded
-from database import get_collection
+from src.core.config import settings  # noqa: F401 to ensure dotenv is loaded
+from src.core.database import get_collection
 
 
 CONFIG_COLLECTION = get_collection("bot_config")

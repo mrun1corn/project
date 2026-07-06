@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import os
@@ -9,8 +9,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputSticker, U
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
-from comm_checker import check_command_enabled
-from settings import settings
+from src.core.security import check_command_enabled
+from src.core.config import settings
 
 
 def get_file_extension(sticker_format: str) -> str:

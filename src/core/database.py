@@ -1,6 +1,6 @@
 import certifi
 from motor.motor_asyncio import AsyncIOMotorClient
-from settings import settings
+from src.core.config import settings
 
 
 tls_kwargs = {}

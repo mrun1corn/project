@@ -72,7 +72,7 @@ The migration script only imports legacy files if they exist, for example `comma
 Run a single polling instance:
 
 ```bash
-python bot.py
+python src/main.py
 ```
 
 If `BOT_TOKEN` is missing, startup fails immediately. If `ADMIN_CHAT_ID` is missing, the bot still starts but admin approvals and notifications will not work correctly.
@@ -155,7 +155,7 @@ Wants=network-online.target
 [Service]
 User=root
 WorkingDirectory=/root/telegram-bot
-ExecStart=/usr/bin/python3 /root/telegram-bot/bot.py
+ExecStart=/usr/bin/python3 /root/telegram-bot/src/main.py
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1

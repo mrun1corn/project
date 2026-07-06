@@ -14,8 +14,8 @@ mock_db.get_collection.return_value = mock_collection
 sys.modules['database'] = mock_db
 
 # Import targets
-from gemini import sanitize_response, wants_image_output
-from settings import settings
+from src.modules.ai.handlers import sanitize_response, wants_image_output
+from src.core.config import settings
 
 class TestGeminiHelpers(unittest.TestCase):
     def test_sanitize_response(self):
@@ -45,13 +45,13 @@ class TestGeminiHelpers(unittest.TestCase):
         self.assertFalse(wants_image_output("", False))
 
 class TestMirrorUpdateMessage(unittest.IsolatedAsyncioTestCase):
-    @patch('mirror.settings')
+    @patch('src.modules.mirror.handlers.settings')
     async def test_update_message_success(self, mock_settings):
         # Mock settings status interval
         mock_settings.mirror_status_interval = 0
         
         # We need to mock MirrorTask
-        from mirror import MirrorTask, CANCEL_CALLBACK_PREFIX
+        from src.modules.mirror.handlers import MirrorTask, CANCEL_CALLBACK_PREFIX
         
         mock_app = MagicMock()
         mock_app.bot = AsyncMock()
@@ -90,8 +90,8 @@ class TestMirrorUpdateMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(button.callback_data, f"{CANCEL_CALLBACK_PREFIX}:abc123xyz456")
 
 class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
-    @patch('group_management.load_group')
-    @patch('group_management.is_user_admin')
+    @patch('src.modules.group.handlers.load_group')
+    @patch('src.modules.group.handlers.is_user_admin')
     async def test_enforce_locks_triggered(self, mock_is_admin, mock_load_group):
         # Mock load_group to return active locks
         mock_load_group.return_value = {
@@ -99,7 +99,7 @@ class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
         }
         mock_is_admin.return_value = False # User is not admin
         
-        from group_management import enforce_locks
+        from src.modules.group.handlers import enforce_locks
         
         # Mock Update and ContextTypes
         mock_update = MagicMock()
@@ -119,15 +119,15 @@ class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
         # Verify message was deleted due to audio lock
         mock_update.message.delete.assert_called_once()
 
-    @patch('group_management.load_group')
-    @patch('group_management.is_user_admin')
+    @patch('src.modules.group.handlers.load_group')
+    @patch('src.modules.group.handlers.is_user_admin')
     async def test_enforce_locks_not_triggered(self, mock_is_admin, mock_load_group):
         mock_load_group.return_value = {
             "locks": {"audio": True, "photo": True}
         }
         mock_is_admin.return_value = False
         
-        from group_management import enforce_locks
+        from src.modules.group.handlers import enforce_locks
         
         mock_update = MagicMock()
         mock_update.message = MagicMock()
@@ -147,14 +147,14 @@ class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
         mock_update.message.delete.assert_not_called()
 
 class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
-    @patch('comm_checker.load_json')
-    @patch('comm_checker.save_json')
+    @patch('src.core.security.load_json')
+    @patch('src.core.security.save_json')
     async def test_comm_checker_fallback(self, mock_save_json, mock_load_json):
         # We trigger database connection failure in _ensure_config
-        from comm_checker import CONFIG_COLLECTION, _ensure_config
+        from src.core.security import CONFIG_COLLECTION, _ensure_config
         
         # Reset caches
-        import comm_checker
+        import src.core.security as comm_checker
         comm_checker._command_states_cache = None
         comm_checker._approved_users_cache = None
         
@@ -173,11 +173,11 @@ class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(states["ai"])
         self.assertIn(9999, approved)
 
-    @patch('group_management.load_json')
-    @patch('group_management.save_json')
+    @patch('src.modules.group.handlers.load_json')
+    @patch('src.modules.group.handlers.save_json')
     async def test_group_management_fallback(self, mock_save_json, mock_load_json):
         # Reset cache in group_management
-        import group_management
+        import src.modules.group.handlers as group_management
         group_management._group_cache = {}
         group_management.GROUPS_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
         
@@ -188,10 +188,10 @@ class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(group_data["locks"]["audio"])
         mock_load_json.assert_called_with("group_data/12345.json", None)
 
-    @patch('notes.load_json')
-    @patch('notes.save_json')
+    @patch('src.modules.notes.handlers.load_json')
+    @patch('src.modules.notes.handlers.save_json')
     async def test_notes_fallback(self, mock_save_json, mock_load_json):
-        import notes
+        import src.modules.notes.handlers as notes
         notes.NOTES_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
         
         # Mock load_json

@@ -1,4 +1,4 @@
-﻿import html
+import html
 import os
 import shlex
 import subprocess
@@ -6,7 +6,7 @@ import subprocess
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from command_template import CommandSpec, guard_command
+from src.core.guard import CommandSpec, guard_command
 
 
 user_shell_states = {}
