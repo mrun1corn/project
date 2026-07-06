@@ -124,8 +124,9 @@ def _format_speed(bps: Optional[float]) -> str:
     return f"{_format_size(int(bps))}/s"
 
 def _progress_bar(percent: float) -> str:
-    filled = int(percent // 10)
-    return "█" * filled + "░" * (10 - filled)
+    percent = min(max(percent, 0.0), 100.0)
+    filled = min(int(percent // 6.66), 15)
+    return "▰" * filled + "▱" * (15 - filled)
 
 def _format_eta(seconds: Optional[int]) -> str:
     if seconds is None or seconds < 0:
@@ -137,11 +138,6 @@ def _format_eta(seconds: Optional[int]) -> str:
     if minutes:
         return f"{minutes:d}m {sec:02d}s"
     return f"{sec:d}s"
-
-
-def _progress_bar(percent: float) -> str:
-    filled = int(percent // 10)
-    return "█" * filled + "░" * (10 - filled)
 
 
 def _extract_infohash(magnet: str) -> Optional[str]:

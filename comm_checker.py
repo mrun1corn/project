@@ -127,15 +127,15 @@ def _format_command_overview(include_status: bool = False) -> str:
     for command in sorted(GLOBAL_COMMAND_DEFAULTS):
         status = states.get(command, GLOBAL_COMMAND_DEFAULTS[command])
         if include_status:
-            state_text = "Enabled" if status else "Disabled"
-            lines.append(f"• {command}: {state_text}")
+            state_emoji = "🟢" if status else "🔴"
+            lines.append(f"• <code>{command}</code>: {state_emoji}")
         else:
-            lines.append(f"• {command}")
+            lines.append(f"• <code>{command}</code>")
     return "\n".join(lines)
 
 
 def _format_simple_list(names) -> str:
-    return "\n".join(f"• {name}" for name in sorted(names))
+    return "\n".join(f"• <code>{name}</code>" for name in sorted(names))
 
 
 @is_admin

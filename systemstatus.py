@@ -28,9 +28,9 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         uptime_str = time.strftime("%Hh %Mm %Ss", time.gmtime(uptime))
         response = (
             "<b>Bot Status</b>\n"
-            f"• Uptime: <code>{html.escape(uptime_str)}</code>\n"
-            f"• System: <code>{html.escape(platform.system())} {html.escape(platform.release())}</code>\n"
-            "• Health: <b>Running and responsive</b>"
+            f"⏱️ Uptime: <code>{html.escape(uptime_str)}</code>\n"
+            f"💻 System: <code>{html.escape(platform.system())} {html.escape(platform.release())}</code>\n"
+            "💚 Health: <b>Running and responsive</b>"
         )
         await update.message.reply_text(response, parse_mode="HTML")
     except Exception:

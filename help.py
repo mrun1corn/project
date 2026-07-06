@@ -82,13 +82,22 @@ HELP_TOPICS = {
         },
     },
 }
+CATEGORY_LABELS = {
+    "note_usage": "📝 Notes",
+    "general": "✨ General",
+    "system": "🛠️ System",
+    "media": "🎵 Media",
+    "ai": "🤖 Gemini AI",
+    "group_manager": "👥 Groups",
+}
 
 
 def get_resized_keyboard(commands, commands_per_row=3):
     buttons = []
     row = []
     for i, cmd in enumerate(commands, 1):
-        row.append(InlineKeyboardButton(f"/{cmd}", callback_data=f"help_{cmd}"))
+        label = CATEGORY_LABELS.get(cmd, f"/{cmd}")
+        row.append(InlineKeyboardButton(label, callback_data=f"help_{cmd}"))
         if i % commands_per_row == 0:
             buttons.append(row)
             row = []
@@ -120,7 +129,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Bot Command Categories</b>\nChoose a category below to explore its commands.",
         reply_markup=get_resized_keyboard(
             [cmd for cmd, data in HELP_TOPICS.items() if data["category"] == "main"],
-            commands_per_row=3,
+            commands_per_row=2,
         ),
         parse_mode="HTML",
     )
@@ -137,7 +146,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="<b>Bot Command Categories</b>\nChoose a category below to explore its commands.",
             reply_markup=get_resized_keyboard(
                 [cmd for cmd, data in HELP_TOPICS.items() if data["category"] == "main"],
-                commands_per_row=3,
+                commands_per_row=2,
             ),
             parse_mode="HTML",
         )
@@ -147,7 +156,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subcommands = HELP_TOPICS[command].get("subcommands", {})
         keyboard = get_resized_keyboard(subcommands.keys(), commands_per_row=3)
         keyboard_list = list(keyboard.inline_keyboard)
-        keyboard_list.append([InlineKeyboardButton("Back to Categories", callback_data="help_main")])
+        keyboard_list.append([InlineKeyboardButton("🔙 Back to Categories", callback_data="help_main")])
         await query.edit_message_text(
             text=f"<b>{HELP_TOPICS[command]['description']}</b>\nChoose a command to view its details.",
             reply_markup=InlineKeyboardMarkup(keyboard_list),
@@ -158,8 +167,9 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for category, data in HELP_TOPICS.items():
         if "subcommands" in data and command in data["subcommands"]:
             description = data["subcommands"][command]
+            back_label = CATEGORY_LABELS.get(category, category.title())
             keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton(f"Back to {category.title()} Commands", callback_data=f"help_{category}")]]
+                [[InlineKeyboardButton(f"🔙 Back to {back_label}", callback_data=f"help_{category}")]]
             )
             await query.edit_message_text(
                 text=f"<b>Help for /{command}</b>\n\n{description}",
@@ -168,7 +178,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Back to Categories", callback_data="help_main")]])
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Categories", callback_data="help_main")]])
     await query.edit_message_text(
         text="<b>No Help Available</b>\nI couldn't find a help entry for that command.",
         reply_markup=keyboard,
@@ -179,3 +189,4 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def register_help_handlers(application):
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(help_callback, pattern="^help_"))
+

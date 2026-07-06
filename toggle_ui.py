@@ -6,8 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 def toggle_text(enabled: bool) -> str:
-    return "On" if enabled else "Off"
-
+    return "🟢" if enabled else "🔴"
 
 def build_toggle_keyboard(
     items: Iterable[tuple[str, bool, str]],
