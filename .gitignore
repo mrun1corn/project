@@ -3,3 +3,5 @@ downloads/
 models/
 bot.log
 .env
+.venv/
+graphify-out/
