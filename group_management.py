@@ -551,6 +551,93 @@ def _check_entities(update: Update, entity_types) -> bool:
             return True
     return False
 
+def _is_lock_triggered(
+    lock_type: str,
+    message,
+    update: Update,
+    text_or_caption: str,
+    is_anonymous_channel_sender: bool,
+    bots_joining: bool,
+    is_forwarded_from_bot: bool,
+    is_forwarded_from_channel: bool,
+    is_forwarded_from_user: bool,
+) -> bool:
+    if lock_type == "album":
+        return bool(getattr(message, 'media_group_id', None))
+    if lock_type == "anonchannel":
+        return is_anonymous_channel_sender
+    if lock_type == "audio":
+        return bool(getattr(message, 'audio', None))
+    if lock_type == "bot":
+        return bots_joining
+    if lock_type == "botlink":
+        return _check_entities(update, ("url", "text_link")) and "t.me/" in text_or_caption
+    if lock_type == "cashtag":
+        return _check_entities(update, "cashtag")
+    if lock_type == "command":
+        return _check_entities(update, "bot_command")
+    if lock_type == "contact":
+        return bool(getattr(message, 'contact', None))
+    if lock_type == "document":
+        return bool(getattr(message, 'document', None))
+    if lock_type == "email":
+        return _check_entities(update, "email")
+    if lock_type == "emoji":
+        return _check_entities(update, ("custom_emoji",))
+    if lock_type == "forward":
+        return bool(getattr(message, 'forward_date', None))
+    if lock_type == "forwardbot":
+        return is_forwarded_from_bot
+    if lock_type == "forwardchannel":
+        return is_forwarded_from_channel
+    if lock_type == "forwarduser":
+        return is_forwarded_from_user
+    if lock_type == "game":
+        return bool(getattr(message, 'game', None))
+    if lock_type == "gif":
+        return bool(getattr(message, 'animation', None))
+    if lock_type == "inline":
+        return bool(getattr(message, 'via_bot', None))
+    if lock_type == "invitelink":
+        return _check_entities(update, ("url", "text_link")) and (
+            "t.me/joinchat/" in text_or_caption or "t.me/+" in text_or_caption
+        )
+    if lock_type == "location":
+        return bool(getattr(message, 'location', None))
+    if lock_type == "phone":
+        return _check_entities(update, "phone_number")
+    if lock_type == "photo":
+        return bool(getattr(message, 'photo', None))
+    if lock_type == "poll":
+        return bool(getattr(message, 'poll', None))
+    if lock_type == "spoiler":
+        return _check_entities(update, "spoiler")
+    if lock_type == "sticker":
+        return bool(getattr(message, 'sticker', None) and not (
+            getattr(message.sticker, "is_animated", False)
+            or getattr(message.sticker, "is_video", False)
+            or getattr(message.sticker, "is_premium", False)
+        ))
+    if lock_type == "stickeranimated":
+        return bool(getattr(message, 'sticker', None) and (
+            getattr(message.sticker, "is_animated", False)
+            or getattr(message.sticker, "is_video", False)
+        ))
+    if lock_type == "stickerpremium":
+        return bool(getattr(message, 'sticker', None) and getattr(message.sticker, "is_premium", False))
+    if lock_type == "text":
+        return bool(text_or_caption.strip())
+    if lock_type == "url":
+        return _check_entities(update, ("url", "text_link"))
+    if lock_type == "video":
+        return bool(getattr(message, 'video', None))
+    if lock_type == "video_note":
+        return bool(getattr(message, 'video_note', None))
+    if lock_type == "voice":
+        return bool(getattr(message, 'voice', None))
+    return False
+
+
 @error_handler
 async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.from_user:
@@ -597,53 +684,20 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_members = [member for member in new_members if getattr(member, 'is_bot', False)]
         bots_joining = bool(bot_members)
 
-        lock_checks = {
-            "album": bool(getattr(message, 'media_group_id', None)),
-            "anonchannel": is_anonymous_channel_sender,
-            "audio": bool(getattr(message, 'audio', None)),
-            "bot": bots_joining,
-            "botlink": _check_entities(update, ("url", "text_link")) and (
-                "t.me/" in text_or_caption
-            ),
-            "cashtag": _check_entities(update, "cashtag"),
-            "command": _check_entities(update, "bot_command"),
-            "contact": bool(getattr(message, 'contact', None)),
-            "document": bool(getattr(message, 'document', None)),
-            "email": _check_entities(update, "email"),
-            "emoji": _check_entities(update, ("custom_emoji",)),
-            "forward": bool(getattr(message, 'forward_date', None)),
-            "forwardbot": is_forwarded_from_bot,
-            "forwardchannel": is_forwarded_from_channel,
-            "forwarduser": is_forwarded_from_user,
-            "game": bool(getattr(message, 'game', None)),
-            "gif": bool(getattr(message, 'animation', None)),
-            "inline": bool(getattr(message, 'via_bot', None)),
-            "invitelink": _check_entities(update, ("url", "text_link")) and (
-                "t.me/joinchat/" in text_or_caption or "t.me/+" in text_or_caption
-            ),
-            "location": bool(getattr(message, 'location', None)),
-            "phone": _check_entities(update, "phone_number"),
-            "photo": bool(getattr(message, 'photo', None)),
-            "poll": bool(getattr(message, 'poll', None)),
-            "spoiler": _check_entities(update, "spoiler"),
-            "sticker": bool(getattr(message, 'sticker', None) and not (
-                getattr(message.sticker, "is_animated", False)
-                or getattr(message.sticker, "is_video", False)
-                or getattr(message.sticker, "is_premium", False)
-            )),
-            "stickeranimated": bool(getattr(message, 'sticker', None) and (
-                getattr(message.sticker, "is_animated", False)
-                or getattr(message.sticker, "is_video", False)
-            )),
-            "stickerpremium": bool(getattr(message, 'sticker', None) and getattr(message.sticker, "is_premium", False)),
-            "text": bool(text_or_caption.strip()),
-            "url": _check_entities(update, ("url", "text_link")),
-            "video": bool(getattr(message, 'video', None)),
-            "video_note": bool(getattr(message, 'video_note', None)),
-            "voice": bool(getattr(message, 'voice', None)),
-        }
-
-        triggered_locks = [lock_type for lock_type, condition in lock_checks.items() if locks.get(lock_type) and condition]
+        triggered_locks = []
+        for lock_type, is_active in locks.items():
+            if is_active and _is_lock_triggered(
+                lock_type,
+                message,
+                update,
+                text_or_caption,
+                is_anonymous_channel_sender,
+                bots_joining,
+                is_forwarded_from_bot,
+                is_forwarded_from_channel,
+                is_forwarded_from_user,
+            ):
+                triggered_locks.append(lock_type)
 
         if "bot" in triggered_locks and bot_members:
             bot_rights = await get_bot_admin_rights(context, chat_id)
@@ -659,11 +713,11 @@ async def enforce_locks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         should_delete = bool(triggered_locks)
     except AttributeError as e:
-        print(f"AttributeError in enforce_locks during lock_checks creation: {e}")
+        print(f"AttributeError in enforce_locks: {e}")
         triggered_locks = []
         should_delete = False
     except Exception as e:
-        print(f"Unexpected error in enforce_locks during lock_checks creation: {e}")
+        print(f"Unexpected error in enforce_locks: {e}")
         triggered_locks = []
         should_delete = False
 

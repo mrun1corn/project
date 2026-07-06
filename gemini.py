@@ -273,6 +273,128 @@ async def send_generated_images(context: ContextTypes.DEFAULT_TYPE, chat_id: int
     await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
 
+async def _extract_attachment(replied_message, context, prompt_text: str) -> tuple[str | None, str | None, str]:
+    """
+    Processes the attachment in the replied message if present.
+    Returns a tuple of (file_data, mime_type, updated_prompt_text).
+    """
+    file_data = None
+    mime_type = None
+    file = None
+    file_name = None
+    temp_file_path = None
+
+    if replied_message.document:
+        file = replied_message.document
+        file_name = file.file_name
+    elif replied_message.photo:
+        file = replied_message.photo[-1]
+        file_name = "temp_image.jpg"
+
+    if file:
+        try:
+            file_obj = await context.bot.get_file(file.file_id)
+            temp_file_path = f"temp_{file.file_unique_id}_{file_name}"
+            await file_obj.download_to_drive(temp_file_path)
+
+            file_data, mime_type = await process_file(temp_file_path, file_name)
+            if "Error" in file_data:
+                raise ValueError(file_data)
+            if not prompt_text:
+                prompt_text = "Describe the content of this file."
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+    elif replied_message.text and not prompt_text:
+        prompt_text = replied_message.text
+
+    return file_data, mime_type, prompt_text
+
+
+def _start_progress_tracker(progress_msg, generate_image: bool, start_time: float) -> asyncio.Task:
+    dots = ["", ".", "..", "..."]
+
+    async def update_progress():
+        dot_index = 0
+        while True:
+            elapsed = time.time() - start_time
+            try:
+                status_line = "🖼️ Generating image" if generate_image else "🤖 Thinking"
+                await progress_msg.edit_text(
+                    f"<b>AI Assistant</b>\n{status_line}{dots[dot_index]}\n⏱️ {elapsed:.1f}s",
+                    parse_mode="HTML",
+                )
+            except BadRequest:
+                break
+            dot_index = (dot_index + 1) % len(dots)
+            await asyncio.sleep(PROGRESS_UPDATE_INTERVAL)
+
+    return asyncio.create_task(update_progress())
+
+
+async def _render_ai_response(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    response: dict,
+    elapsed: float,
+    progress_msg,
+    conversation_history: list,
+    user_id: int,
+    user_data: dict,
+) -> None:
+    response_text = response.get("text", "")
+    generated_images = response.get("images", [])
+    timing_info = f"\n\n<i>Generated in {elapsed:.1f}s</i>"
+
+    if generated_images:
+        caption_html = None
+        if response_text:
+            caption_html = sanitize_response(html.escape(response_text)) + timing_info
+
+        await progress_msg.edit_text(
+            "<b>AI Assistant</b>\n🖼️ Uploading the generated image...",
+            parse_mode="HTML",
+        )
+        await send_generated_images(context, update.effective_chat.id, generated_images, caption_html)
+
+        if response_text and len(caption_html or "") > MAX_CAPTION_LENGTH:
+            await progress_msg.edit_text(
+                sanitize_response(html.escape(response_text))[: MAX_MESSAGE_LENGTH - 80] + timing_info,
+                parse_mode="HTML",
+            )
+        else:
+            await progress_msg.delete()
+    else:
+        escaped_html = html.escape(response_text)
+        sanitized_reply = sanitize_response(escaped_html)
+        full_message = f"{sanitized_reply}{timing_info}"
+
+        if len(full_message) > MAX_MESSAGE_LENGTH:
+            try:
+                await progress_msg.edit_text(
+                    f"<b>AI Assistant</b>\n📦 The reply is long ({len(response_text)} characters). Uploading the full result...",
+                    parse_mode="HTML",
+                )
+                termbin_url = await upload_to_termbin(response_text)
+                final_message = f"<b>Full Response Uploaded</b>\n🔗 {html.escape(termbin_url)}{timing_info}"
+                await progress_msg.edit_text(final_message, parse_mode="HTML")
+            except Exception as exc:
+                truncated_reply = sanitized_reply[: MAX_MESSAGE_LENGTH - 220] + f"...\n\n<i>Response was truncated because upload failed: {html.escape(str(exc))}</i>"
+                await progress_msg.edit_text(f"{truncated_reply}{timing_info}", parse_mode="HTML")
+        else:
+            await progress_msg.edit_text(full_message, parse_mode="HTML")
+
+    history_parts = []
+    if response_text:
+        history_parts.append({"text": response_text})
+    elif generated_images:
+        history_parts.append({"text": "[Generated image response]"})
+    if history_parts:
+        conversation_history.append({"role": "model", "parts": history_parts})
+        user_data["history"] = conversation_history
+        await save_user_context(user_id, user_data)
+
+
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     user_id = update.effective_user.id
@@ -288,43 +410,20 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     prompt_text = " ".join(context.args) if context.args else ""
 
     if replied_message:
-        file = None
-        file_name = None
-        temp_file_path = None
-
-        if replied_message.document:
-            file = replied_message.document
-            file_name = file.file_name
-        elif replied_message.photo:
-            file = replied_message.photo[-1]
-            file_name = "temp_image.jpg"
-
-        if file:
-            try:
-                file_obj = await context.bot.get_file(file.file_id)
-                temp_file_path = f"temp_{file.file_unique_id}_{file_name}"
-                await file_obj.download_to_drive(temp_file_path)
-
-                file_data, mime_type = await process_file(temp_file_path, file_name)
-                if "Error" in file_data:
-                    await message.reply_text(
-                        f"<b>File Processing Failed</b>\n<code>{html.escape(file_data)}</code>",
-                        parse_mode="HTML",
-                    )
-                    return
-                if not prompt_text:
-                    prompt_text = "Describe the content of this file."
-            except Exception as exc:
-                await message.reply_text(
-                    f"<b>Attachment Processing Failed</b>\n<code>{html.escape(str(exc))}</code>",
-                    parse_mode="HTML",
-                )
-                return
-            finally:
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-        elif replied_message.text and not prompt_text:
-            prompt_text = replied_message.text
+        try:
+            file_data, mime_type, prompt_text = await _extract_attachment(replied_message, context, prompt_text)
+        except ValueError as exc:
+            await message.reply_text(
+                f"<b>File Processing Failed</b>\n<code>{html.escape(str(exc))}</code>",
+                parse_mode="HTML",
+            )
+            return
+        except Exception as exc:
+            await message.reply_text(
+                f"<b>Attachment Processing Failed</b>\n<code>{html.escape(str(exc))}</code>",
+                parse_mode="HTML",
+            )
+            return
 
     if not prompt_text and not (file_data and mime_type):
         await message.reply_text(
@@ -350,26 +449,8 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if len(conversation_history) > MAX_HISTORY_TURNS * 2:
         conversation_history = conversation_history[-(MAX_HISTORY_TURNS * 2):]
 
-    dots = ["", ".", "..", "..."]
-    dot_index = 0
     start_time = time.time()
-
-    async def update_progress():
-        nonlocal dot_index
-        while True:
-            elapsed = time.time() - start_time
-            try:
-                status_line = "🖼️ Generating image" if generate_image else "🤖 Thinking"
-                await progress_msg.edit_text(
-                    f"<b>AI Assistant</b>\n{status_line}{dots[dot_index]}\n⏱️ {elapsed:.1f}s",
-                    parse_mode="HTML",
-                )
-            except BadRequest:
-                break
-            dot_index = (dot_index + 1) % len(dots)
-            await asyncio.sleep(PROGRESS_UPDATE_INTERVAL)
-
-    progress_task = asyncio.create_task(update_progress())
+    progress_task = _start_progress_tracker(progress_msg, generate_image, start_time)
 
     try:
         response, elapsed = await get_gemini_response(
@@ -378,57 +459,16 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             file_mime_type=mime_type,
             generate_image=generate_image,
         )
-
-        response_text = response.get("text", "")
-        generated_images = response.get("images", [])
-        timing_info = f"\n\n<i>Generated in {elapsed:.1f}s</i>"
-
-        if generated_images:
-            caption_html = None
-            if response_text:
-                caption_html = sanitize_response(html.escape(response_text)) + timing_info
-
-            await progress_msg.edit_text(
-                "<b>AI Assistant</b>\n🖼️ Uploading the generated image...",
-                parse_mode="HTML",
-            )
-            await send_generated_images(context, update.effective_chat.id, generated_images, caption_html)
-
-            if response_text and len(caption_html or "") > MAX_CAPTION_LENGTH:
-                await progress_msg.edit_text(
-                    sanitize_response(html.escape(response_text))[: MAX_MESSAGE_LENGTH - 80] + timing_info,
-                    parse_mode="HTML",
-                )
-            else:
-                await progress_msg.delete()
-        else:
-            escaped_html = html.escape(response_text)
-            sanitized_reply = sanitize_response(escaped_html)
-            full_message = f"{sanitized_reply}{timing_info}"
-
-            if len(full_message) > MAX_MESSAGE_LENGTH:
-                try:
-                    await progress_msg.edit_text(
-                        f"<b>AI Assistant</b>\n📦 The reply is long ({len(response_text)} characters). Uploading the full result...",
-                        parse_mode="HTML",
-                    )
-                    termbin_url = await upload_to_termbin(response_text)
-                    final_message = f"<b>Full Response Uploaded</b>\n🔗 {html.escape(termbin_url)}{timing_info}"
-                    await progress_msg.edit_text(final_message, parse_mode="HTML")
-                except Exception as exc:
-                    truncated_reply = sanitized_reply[: MAX_MESSAGE_LENGTH - 220] + f"...\n\n<i>Response was truncated because upload failed: {html.escape(str(exc))}</i>"
-                    await progress_msg.edit_text(f"{truncated_reply}{timing_info}", parse_mode="HTML")
-            else:
-                await progress_msg.edit_text(full_message, parse_mode="HTML")
-
-        history_parts = []
-        if response_text:
-            history_parts.append({"text": response_text})
-        elif generated_images:
-            history_parts.append({"text": "[Generated image response]"})
-        if history_parts:
-            conversation_history.append({"role": "model", "parts": history_parts})
-            user_data["history"] = conversation_history
-            await save_user_context(user_id, user_data)
+        await _render_ai_response(
+            update=update,
+            context=context,
+            response=response,
+            elapsed=elapsed,
+            progress_msg=progress_msg,
+            conversation_history=conversation_history,
+            user_id=user_id,
+            user_data=user_data,
+        )
     finally:
         progress_task.cancel()
+

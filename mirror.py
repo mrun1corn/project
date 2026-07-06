@@ -212,6 +212,7 @@ class MirrorTask:
                 return
             self.last_update = now
 
+            short_id = self.task_id[:8] if self.task_id else ""
             emoji = STATUS_EMOJIS.get(self.phase, "ℹ️")
             lines = [f"{emoji} <b>Status:</b> {self.phase.title()}"]
             if self.name:
