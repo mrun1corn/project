@@ -9,7 +9,13 @@ try:
 except Exception:
     pass
 
-_client = AsyncIOMotorClient(settings.mongodb_uri, **tls_kwargs)
+_client = AsyncIOMotorClient(
+    settings.mongodb_uri,
+    serverSelectionTimeoutMS=2000,
+    connectTimeoutMS=2000,
+    socketTimeoutMS=3000,
+    **tls_kwargs
+)
 db = _client[settings.mongodb_db_name]
 
 

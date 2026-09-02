@@ -330,13 +330,24 @@ async def enforce_user_access(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not is_command:
         return
 
+    # Allow /start through so new users receive the welcome screen
+    if update.message and update.message.text and update.message.text.strip().startswith("/start"):
+        return
+
     if await check_user_approval(user.id):
         return
 
     if update.callback_query:
-        await update.callback_query.answer("You are not approved to use this bot yet.", show_alert=True)
+        await update.callback_query.answer("⚠️ You are not approved to use this bot yet.", show_alert=True)
     elif update.message:
-        await update.message.reply_text("⚠️ You are not approved to use this bot yet.")
+        await update.message.reply_text(
+            "⚠️ <b>Access Restricted</b>\n"
+            "You are not approved to use this bot yet.\n\n"
+            f"Your User ID: <code>{user.id}</code>\n"
+            f"Ask the admin to approve you using:\n"
+            f"<code>/approve {user.id}</code>",
+            parse_mode="HTML",
+        )
 
     raise ApplicationHandlerStop
 

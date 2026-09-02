@@ -1,3 +1,5 @@
+import html
+import traceback
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -36,7 +38,7 @@ from src.modules import (
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     error = context.error
     print(f"Unhandled error: {error}")
-
+    traceback.print_exception(None, error, error.__traceback__ if error else None)
     message = None
     if isinstance(update, Update):
         message = update.effective_message
@@ -76,7 +78,7 @@ async def post_init(application):
                     text=(
                         "<b>MongoDB Warning</b>\n"
                         "⚠️ Preflight failed. The bot will use local JSON fallback files until the database is reachable.\n\n"
-                        f"<code>{exc}</code>"
+                        f"<code>{html.escape(str(exc))}</code>"
                     ),
                     parse_mode="HTML",
                 )
