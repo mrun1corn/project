@@ -15,8 +15,8 @@ sys.modules['database'] = mock_db
 
 # Import targets
 from src.modules.ai.handlers import sanitize_response, wants_image_output
+import src.modules.mirror.handlers as mirror_handlers
 from src.core.config import settings
-
 class TestGeminiHelpers(unittest.TestCase):
     def test_sanitize_response(self):
         # Test cleaning consecutive newlines
@@ -200,5 +200,74 @@ class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
         notes_data = await notes.load_notes(12345)
         self.assertEqual(notes_data["group_notes"]["hello"], "world")
         mock_load_json.assert_called_with("notes/12345.json", {"group_notes": {}, "user_notes": {}})
+
+
+class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
+    @patch('src.modules.mirror.handlers.settings')
+    def test_build_target_queue_with_cloudflare(self, mock_settings):
+        from src.modules.mirror.handlers import _build_target_queue
+        mock_settings.upload_targets = ("cloudflare", "pixeldrain")
+        mock_settings.upload_target = "cloudflare"
+        mock_settings.cloudflare_api_token = "cfut_test"
+        mock_settings.pixeldrain_key = "px_test"
+        mock_settings.gofile_token = ""
+        mock_settings.upload_targets_defined = True
+
+        queue = list(_build_target_queue())
+        self.assertEqual(queue, ["cloudflare", "pixeldrain"])
+
+    @patch('src.modules.mirror.handlers.settings')
+    def test_build_target_queue_r2_alias(self, mock_settings):
+        from src.modules.mirror.handlers import _build_target_queue
+        mock_settings.upload_targets = ("r2",)
+        mock_settings.upload_target = "r2"
+        mock_settings.cloudflare_api_token = "cfut_test"
+        mock_settings.pixeldrain_key = ""
+        mock_settings.gofile_token = ""
+        mock_settings.upload_targets_defined = True
+
+        queue = list(_build_target_queue())
+        self.assertEqual(queue, ["cloudflare"])
+
+    @patch('src.modules.mirror.handlers._get_cloudflare_account_id')
+    @patch('src.modules.mirror.handlers._get_cloudflare_public_url')
+    @patch('src.modules.mirror.handlers.settings')
+    async def test_upload_to_cloudflare_async(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
+        from src.modules.mirror.handlers import MirrorTask, _upload_to_cloudflare_async
+        mock_settings.cloudflare_api_token = "cfut_test"
+        mock_settings.cloudflare_r2_bucket = "mirror"
+        mock_get_acc_id.return_value = "acc123"
+        mock_get_pub_url.return_value = "https://pub-test.r2.dev"
+
+        mock_app = MagicMock()
+        mock_app.bot = AsyncMock()
+
+        task = MirrorTask(
+            task_id="cf_task_12345",
+            user_id=123,
+            chat_id=456,
+            status_message_id=789,
+            application=mock_app,
+            name="test_file.txt",
+        )
+
+        # Create a temp file to test upload
+        test_file = "test_upload_temp.txt"
+        with open(test_file, "w") as f:
+            f.write("test content for cloudflare r2")
+
+        try:
+            with patch('aiohttp.ClientSession.put') as mock_put:
+                mock_resp = AsyncMock()
+                mock_resp.status = 200
+                mock_resp.text.return_value = '{"success": true, "result": {"key": "cf_task_12345/test_upload_temp.txt"}}'
+                mock_put.return_value.__aenter__.return_value = mock_resp
+
+                link = await _upload_to_cloudflare_async(task, test_file)
+                self.assertEqual(link, "https://pub-test.r2.dev/cf_task_12345/test_upload_temp.txt")
+                self.assertEqual(task.progress, 100.0)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
 if __name__ == '__main__':
     unittest.main()

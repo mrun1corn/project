@@ -9,6 +9,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlparse, quote
+import mimetypes
 
 import aiohttp
 import requests
@@ -25,8 +26,14 @@ from src.core.config import settings
 from src.core.security import check_user_approval, check_command_enabled
 
 
-ALLOWED_TARGETS = {"pixeldrain", "gofile"}
-TARGET_LABELS = {"pixeldrain": "PixelDrain", "gofile": "GoFile"}
+ALLOWED_TARGETS = {"pixeldrain", "gofile", "cloudflare", "r2", "cloudflare_r2"}
+TARGET_LABELS = {
+    "pixeldrain": "PixelDrain",
+    "gofile": "GoFile",
+    "cloudflare": "Cloudflare R2",
+    "r2": "Cloudflare R2",
+    "cloudflare_r2": "Cloudflare R2",
+}
 CANCEL_CALLBACK_PREFIX = "mirror_cancel"
 STATUS_EMOJIS = {
     "queued": "🟡",
@@ -41,6 +48,85 @@ STATUS_EMOJIS = {
 
 TARGET_QUEUE: Optional[Deque[str]] = None
 TARGET_QUEUE_LOCK = asyncio.Lock()
+
+_CACHED_CF_ACCOUNT_ID: Optional[str] = None
+_CACHED_CF_PUBLIC_URL: Optional[str] = None
+_CF_CACHE_LOCK = asyncio.Lock()
+
+
+async def _get_cloudflare_account_id() -> str:
+    global _CACHED_CF_ACCOUNT_ID
+    if settings.cloudflare_account_id:
+        return settings.cloudflare_account_id
+    async with _CF_CACHE_LOCK:
+        if _CACHED_CF_ACCOUNT_ID:
+            return _CACHED_CF_ACCOUNT_ID
+        token = settings.cloudflare_api_token
+        if not token:
+            raise ValueError("Cloudflare API token not configured")
+        headers = {"Authorization": f"Bearer {token}"}
+        async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+            async with session.get("https://api.cloudflare.com/client/v4/accounts", headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    accounts = data.get("result", [])
+                    if accounts and "id" in accounts[0]:
+                        _CACHED_CF_ACCOUNT_ID = accounts[0]["id"]
+                        return _CACHED_CF_ACCOUNT_ID
+        raise ValueError("Could not determine Cloudflare Account ID. Please set CLOUDFLARE_ACCOUNT_ID.")
+
+
+async def _get_cloudflare_public_url(account_id: str, bucket_name: str) -> str:
+    global _CACHED_CF_PUBLIC_URL
+    if settings.cloudflare_r2_public_url:
+        return settings.cloudflare_r2_public_url
+    async with _CF_CACHE_LOCK:
+        if _CACHED_CF_PUBLIC_URL:
+            return _CACHED_CF_PUBLIC_URL
+        token = settings.cloudflare_api_token
+        if not token:
+            raise ValueError("Cloudflare API token not configured")
+        headers = {"Authorization": f"Bearer {token}"}
+        async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+            # 1. Check custom domains first
+            try:
+                async with session.get(
+                    f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/domains/custom",
+                    headers=headers,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        domains = data.get("result", {}).get("domains", [])
+                        if domains and "domain" in domains[0]:
+                            _CACHED_CF_PUBLIC_URL = f"https://{domains[0]['domain']}"
+                            return _CACHED_CF_PUBLIC_URL
+            except Exception:
+                pass
+            # 2. Check managed r2.dev domain
+            try:
+                async with session.get(
+                    f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/domains/managed",
+                    headers=headers,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        result = data.get("result", {})
+                        domain = result.get("domain")
+                        if domain:
+                            if not result.get("enabled"):
+                                try:
+                                    await session.put(
+                                        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/domains/managed",
+                                        headers={**headers, "Content-Type": "application/json"},
+                                        json={"enabled": True},
+                                    )
+                                except Exception:
+                                    pass
+                            _CACHED_CF_PUBLIC_URL = f"https://{domain}"
+                            return _CACHED_CF_PUBLIC_URL
+            except Exception:
+                pass
+        raise ValueError("Could not determine Cloudflare R2 public download URL. Please set CLOUDFLARE_R2_PUBLIC_URL.")
 
 
 def ensure_download_dir() -> str:
@@ -66,18 +152,29 @@ def _build_target_queue() -> Deque[str]:
     queue: list[str] = []
     for candidate in configured:
         normalized = candidate.lower()
+        if normalized in {"r2", "cloudflare_r2"}:
+            normalized = "cloudflare"
         if normalized not in ALLOWED_TARGETS:
             continue
         if normalized == "pixeldrain" and not settings.pixeldrain_key:
             continue
-        queue.append(normalized)
+        if normalized == "gofile" and not settings.gofile_token:
+            continue
+        if normalized == "cloudflare" and not settings.cloudflare_api_token:
+            continue
+        if normalized not in queue:
+            queue.append(normalized)
 
     if not queue:
-        if settings.pixeldrain_key:
+        if settings.cloudflare_api_token:
+            queue.append("cloudflare")
+        elif settings.pixeldrain_key:
             queue.append("pixeldrain")
         else:
             queue.append("gofile")
     elif not settings.upload_targets_defined:
+        if settings.cloudflare_api_token and "cloudflare" not in queue:
+            queue.append("cloudflare")
         if settings.pixeldrain_key and "pixeldrain" not in queue:
             queue.append("pixeldrain")
         if settings.gofile_token and "gofile" not in queue:
@@ -774,7 +871,9 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
 
             try:
                 _ensure_not_cancelled(task)
-                if target == "gofile":
+                if target in {"cloudflare", "r2", "cloudflare_r2"}:
+                    link = await _upload_to_cloudflare_async(task, upload_path)
+                elif target == "gofile":
                     _ensure_not_cancelled(task)
                     link = await asyncio.to_thread(_upload_to_gofile, upload_path, os.path.basename(upload_path))
                     task.downloaded_bytes = task.total_bytes or task.downloaded_bytes
@@ -853,6 +952,74 @@ async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
     task.speed = None
     await task.update_message(force=True)
     return f"https://pixeldrain.com/u/{file_id}"
+
+
+async def _upload_to_cloudflare_async(task: MirrorTask, filepath: str) -> str:
+    _ensure_not_cancelled(task)
+    token = settings.cloudflare_api_token
+    if not token:
+        raise ValueError("Cloudflare API token not configured")
+
+    account_id = await _get_cloudflare_account_id()
+    bucket_name = settings.cloudflare_r2_bucket or "mirror"
+    filename = os.path.basename(filepath)
+    object_key = f"{task.task_id}/{filename}"
+    encoded_key = quote(object_key, safe="/")
+
+    total_size = os.path.getsize(filepath)
+    task.total_bytes = total_size
+    task.downloaded_bytes = 0
+    start = time.time()
+
+    async def file_generator():
+        chunk_size = 1024 * 512
+        async with aiofiles.open(filepath, "rb") as f:
+            while True:
+                if task.cancel_requested:
+                    raise MirrorCancelled(_cancel_reason(task))
+                chunk = await f.read(chunk_size)
+                if not chunk:
+                    break
+                task.downloaded_bytes += len(chunk)
+                if task.total_bytes:
+                    task.progress = min(99.0, task.downloaded_bytes / task.total_bytes * 100)
+                elapsed = time.time() - start
+                if elapsed > 0:
+                    task.speed = task.downloaded_bytes / elapsed
+                await task.update_message()
+                _ensure_not_cancelled(task)
+                yield chunk
+
+    content_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": content_type,
+    }
+    upload_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{encoded_key}"
+    timeout = ClientTimeout(total=3600)
+
+    async with ClientSession(timeout=timeout) as session:
+        async with session.put(upload_url, data=file_generator(), headers=headers) as resp:
+            text = await resp.text()
+            if resp.status not in (200, 201):
+                raise ValueError(f"Cloudflare R2 upload failed ({resp.status}): {text}")
+            try:
+                payload = json.loads(text)
+                if not payload.get("success", False):
+                    errors = payload.get("errors", [])
+                    error_msg = "; ".join(e.get("message", "") for e in errors) if errors else text
+                    raise ValueError(f"Cloudflare R2 returned error: {error_msg}")
+            except json.JSONDecodeError:
+                raise ValueError(f"Cloudflare R2 returned unexpected response: {text}")
+
+    task.downloaded_bytes = task.total_bytes
+    task.progress = 100.0
+    task.speed = None
+    await task.update_message(force=True)
+
+    public_base = await _get_cloudflare_public_url(account_id, bucket_name)
+    public_base = public_base.rstrip("/")
+    return f"{public_base}/{encoded_key}"
 
 
 def _upload_to_gofile(filepath: str, filename: str) -> str:
