@@ -225,16 +225,17 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
         mock_settings.pixeldrain_key = ""
         mock_settings.gofile_token = ""
         mock_settings.upload_targets_defined = True
-
         queue = list(_build_target_queue())
         self.assertEqual(queue, ["cloudflare"])
 
     @patch('src.modules.mirror.handlers._get_cloudflare_account_id')
     @patch('src.modules.mirror.handlers._get_cloudflare_public_url')
     @patch('src.modules.mirror.handlers.settings')
-    async def test_upload_to_cloudflare_async(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
+    async def test_upload_to_cloudflare_rest_fallback(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
         from src.modules.mirror.handlers import MirrorTask, _upload_to_cloudflare_async
         mock_settings.cloudflare_api_token = "cfut_test"
+        mock_settings.cloudflare_r2_access_key_id = ""
+        mock_settings.cloudflare_r2_secret_access_key = ""
         mock_settings.cloudflare_r2_bucket = "mirror"
         mock_get_acc_id.return_value = "acc123"
         mock_get_pub_url.return_value = "https://pub-test.r2.dev"
@@ -251,7 +252,6 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
             name="test_file.txt",
         )
 
-        # Create a temp file to test upload
         test_file = "test_upload_temp.txt"
         with open(test_file, "w") as f:
             f.write("test content for cloudflare r2")
@@ -266,6 +266,47 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
                 link = await _upload_to_cloudflare_async(task, test_file)
                 self.assertEqual(link, "https://pub-test.r2.dev/cf_task_12345/test_upload_temp.txt")
                 self.assertEqual(task.progress, 100.0)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+    @patch('src.modules.mirror.handlers._get_cloudflare_account_id')
+    @patch('src.modules.mirror.handlers._get_cloudflare_public_url')
+    @patch('src.modules.mirror.handlers.settings')
+    async def test_upload_to_cloudflare_s3_multipart(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
+        from src.modules.mirror.handlers import MirrorTask, _upload_to_cloudflare_async
+        mock_settings.cloudflare_r2_access_key_id = "test_access_key"
+        mock_settings.cloudflare_r2_secret_access_key = "test_secret_key"
+        mock_settings.cloudflare_r2_bucket = "mirror"
+        mock_get_acc_id.return_value = "acc123"
+        mock_get_pub_url.return_value = "https://pub-test.r2.dev"
+
+        mock_app = MagicMock()
+        mock_app.bot = AsyncMock()
+
+        task = MirrorTask(
+            task_id="cf_s3_12345",
+            user_id=123,
+            chat_id=456,
+            status_message_id=789,
+            application=mock_app,
+            name="big_rom_file.zip",
+        )
+
+        test_file = "test_big_rom_file.zip"
+        with open(test_file, "w") as f:
+            f.write("mock big rom payload")
+
+        try:
+            with patch('boto3.client') as mock_boto:
+                mock_s3 = MagicMock()
+                mock_boto.return_value = mock_s3
+                mock_s3.upload_file.return_value = None
+
+                link = await _upload_to_cloudflare_async(task, test_file)
+                self.assertEqual(link, "https://pub-test.r2.dev/cf_s3_12345/test_big_rom_file.zip")
+                self.assertEqual(task.progress, 100.0)
+                mock_s3.upload_file.assert_called_once()
         finally:
             if os.path.exists(test_file):
                 os.remove(test_file)

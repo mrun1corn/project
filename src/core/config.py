@@ -28,6 +28,8 @@ class Settings:
     cloudflare_account_id: str = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     cloudflare_r2_bucket: str = os.getenv("CLOUDFLARE_R2_BUCKET", "mirror")
     cloudflare_r2_public_url: str = os.getenv("CLOUDFLARE_R2_PUBLIC_URL", "")
+    cloudflare_r2_access_key_id: str = os.getenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+    cloudflare_r2_secret_access_key: str = os.getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
     qbittorrent_host: str = os.getenv("QBITTORRENT_HOST", "http://localhost")
     qbittorrent_port: int = int(os.getenv("QBITTORRENT_PORT", "8080") or 0)
     qbittorrent_username: str = os.getenv("QBITTORRENT_USERNAME", "admin")

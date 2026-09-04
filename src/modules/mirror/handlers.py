@@ -956,10 +956,6 @@ async def _upload_to_pixeldrain_async(task: MirrorTask, filepath: str) -> str:
 
 async def _upload_to_cloudflare_async(task: MirrorTask, filepath: str) -> str:
     _ensure_not_cancelled(task)
-    token = settings.cloudflare_api_token
-    if not token:
-        raise ValueError("Cloudflare API token not configured")
-
     account_id = await _get_cloudflare_account_id()
     bucket_name = settings.cloudflare_r2_bucket or "mirror"
     filename = os.path.basename(filepath)
@@ -969,48 +965,110 @@ async def _upload_to_cloudflare_async(task: MirrorTask, filepath: str) -> str:
     total_size = os.path.getsize(filepath)
     task.total_bytes = total_size
     task.downloaded_bytes = 0
-    start = time.time()
 
-    async def file_generator():
-        chunk_size = 1024 * 512
-        async with aiofiles.open(filepath, "rb") as f:
-            while True:
-                if task.cancel_requested:
-                    raise MirrorCancelled(_cancel_reason(task))
-                chunk = await f.read(chunk_size)
-                if not chunk:
-                    break
-                task.downloaded_bytes += len(chunk)
-                if task.total_bytes:
-                    task.progress = min(99.0, task.downloaded_bytes / task.total_bytes * 100)
-                elapsed = time.time() - start
-                if elapsed > 0:
-                    task.speed = task.downloaded_bytes / elapsed
-                await task.update_message()
-                _ensure_not_cancelled(task)
-                yield chunk
+    # Prefer S3 multipart upload when S3 access keys are configured (supports files of any size)
+    if settings.cloudflare_r2_access_key_id and settings.cloudflare_r2_secret_access_key:
+        endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+        content_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+        loop = asyncio.get_running_loop()
+        start_time = time.time()
 
-    content_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": content_type,
-    }
-    upload_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{encoded_key}"
-    timeout = ClientTimeout(total=3600)
+        def sync_s3_upload():
+            import boto3
+            from botocore.config import Config
+            from boto3.s3.transfer import TransferConfig
 
-    async with ClientSession(timeout=timeout) as session:
-        async with session.put(upload_url, data=file_generator(), headers=headers) as resp:
-            text = await resp.text()
-            if resp.status not in (200, 201):
-                raise ValueError(f"Cloudflare R2 upload failed ({resp.status}): {text}")
-            try:
-                payload = json.loads(text)
-                if not payload.get("success", False):
-                    errors = payload.get("errors", [])
-                    error_msg = "; ".join(e.get("message", "") for e in errors) if errors else text
-                    raise ValueError(f"Cloudflare R2 returned error: {error_msg}")
-            except json.JSONDecodeError:
-                raise ValueError(f"Cloudflare R2 returned unexpected response: {text}")
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=settings.cloudflare_r2_access_key_id,
+                aws_secret_access_key=settings.cloudflare_r2_secret_access_key,
+                config=Config(signature_version="s3v4", retries={"max_attempts": 5, "mode": "standard"}),
+                region_name="auto",
+            )
+
+            class S3ProgressCallback:
+                def __init__(self):
+                    self.transferred = 0
+
+                def __call__(self, bytes_amount):
+                    if task.cancel_requested:
+                        raise MirrorCancelled(_cancel_reason(task))
+                    self.transferred += bytes_amount
+                    task.downloaded_bytes = min(self.transferred, task.total_bytes or self.transferred)
+                    if task.total_bytes:
+                        task.progress = min(99.0, (task.downloaded_bytes / task.total_bytes) * 100)
+                    elapsed = time.time() - start_time
+                    if elapsed > 0:
+                        task.speed = task.downloaded_bytes / elapsed
+                    asyncio.run_coroutine_threadsafe(task.update_message(), loop)
+
+            transfer_config = TransferConfig(
+                multipart_threshold=8 * 1024 * 1024,
+                multipart_chunksize=8 * 1024 * 1024,
+                max_concurrency=6,
+                use_threads=True,
+            )
+            extra_args = {"ContentType": content_type}
+            cb = S3ProgressCallback()
+            s3.upload_file(
+                Filename=filepath,
+                Bucket=bucket_name,
+                Key=object_key,
+                ExtraArgs=extra_args,
+                Config=transfer_config,
+                Callback=cb,
+            )
+
+        print(f"[MIRROR] Task {task.task_id} uploading {filepath} ({total_size} bytes) via Cloudflare R2 S3 multipart")
+        await asyncio.to_thread(sync_s3_upload)
+    else:
+        token = settings.cloudflare_api_token
+        if not token:
+            raise ValueError("Cloudflare API token or R2 S3 keys not configured")
+
+        start = time.time()
+
+        async def file_generator():
+            chunk_size = 1024 * 512
+            async with aiofiles.open(filepath, "rb") as f:
+                while True:
+                    if task.cancel_requested:
+                        raise MirrorCancelled(_cancel_reason(task))
+                    chunk = await f.read(chunk_size)
+                    if not chunk:
+                        break
+                    task.downloaded_bytes += len(chunk)
+                    if task.total_bytes:
+                        task.progress = min(99.0, task.downloaded_bytes / task.total_bytes * 100)
+                    elapsed = time.time() - start
+                    if elapsed > 0:
+                        task.speed = task.downloaded_bytes / elapsed
+                    await task.update_message()
+                    _ensure_not_cancelled(task)
+                    yield chunk
+
+        content_type = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": content_type,
+        }
+        upload_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{encoded_key}"
+        timeout = ClientTimeout(total=3600)
+
+        async with ClientSession(timeout=timeout) as session:
+            async with session.put(upload_url, data=file_generator(), headers=headers) as resp:
+                text = await resp.text()
+                if resp.status not in (200, 201):
+                    raise ValueError(f"Cloudflare R2 upload failed ({resp.status}): {text}")
+                try:
+                    payload = json.loads(text)
+                    if not payload.get("success", False):
+                        errors = payload.get("errors", [])
+                        error_msg = "; ".join(e.get("message", "") for e in errors) if errors else text
+                        raise ValueError(f"Cloudflare R2 returned error: {error_msg}")
+                except json.JSONDecodeError:
+                    raise ValueError(f"Cloudflare R2 returned unexpected response: {text}")
 
     task.downloaded_bytes = task.total_bytes
     task.progress = 100.0
