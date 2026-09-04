@@ -17,8 +17,8 @@ from src.core.database import get_collection
 from src.core.config import settings
 
 
-TEXT_MODEL = "gemini-2.5-flash"
-IMAGE_MODEL = "gemini-2.5-flash-image"
+TEXT_MODEL = "gemini-2.0-flash"
+IMAGE_MODEL = "imagen-3.0-generate-002"
 MAX_MESSAGE_LENGTH = 4096
 MAX_CAPTION_LENGTH = 1024
 PROGRESS_UPDATE_INTERVAL = 1.5
