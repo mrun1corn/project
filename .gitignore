@@ -6,3 +6,9 @@ bot.log
 .venv/
 graphify-out/
 .repowise/
+user_context.json
+command_states.json
+approved_users.json
+group_data/
+notes/
+*.tmp

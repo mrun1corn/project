@@ -330,19 +330,34 @@ async def save_group(chat_id: int, data: dict) -> None:
         print(f"Failed to save group {chat_id} to database, falling back to JSON: {exc}")
     save_json(f"group_data/{chat_id}.json", to_store)
 
-_admin_cache = {}
-_ADMIN_CACHE_TIMEOUT = 60 # seconds
+_MAX_ADMIN_CACHE_SIZE = 2000
+_ADMIN_CACHE_TIMEOUT = 60  # seconds
+_admin_cache: dict[tuple[int, int], tuple[bool, float]] = {}
+
+
+def _cache_admin_status(chat_id: int, user_id: int, is_admin: bool) -> None:
+    now = time.time()
+    if len(_admin_cache) >= _MAX_ADMIN_CACHE_SIZE:
+        expired_keys = [k for k, v in _admin_cache.items() if now - v[1] > _ADMIN_CACHE_TIMEOUT]
+        for k in expired_keys:
+            _admin_cache.pop(k, None)
+        while len(_admin_cache) >= _MAX_ADMIN_CACHE_SIZE:
+            first_key = next(iter(_admin_cache))
+            _admin_cache.pop(first_key, None)
+    _admin_cache[(chat_id, user_id)] = (is_admin, now)
+
 
 async def is_user_admin(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
     """Checks if a user is an administrator in the chat."""
     cache_key = (chat_id, user_id)
-    if cache_key in _admin_cache and time.time() - _admin_cache[cache_key][1] < _ADMIN_CACHE_TIMEOUT:
-        return _admin_cache[cache_key][0]
+    cached = _admin_cache.get(cache_key)
+    if cached and (time.time() - cached[1] < _ADMIN_CACHE_TIMEOUT):
+        return cached[0]
 
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         is_admin = member.status in ['administrator', 'creator']
-        _admin_cache[cache_key] = (is_admin, time.time())
+        _cache_admin_status(chat_id, user_id, is_admin)
         return is_admin
     except Exception as e:
         print(f"Error checking admin status for chat {chat_id}, user {user_id}: {e}")

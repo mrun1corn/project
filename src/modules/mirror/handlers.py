@@ -874,11 +874,7 @@ async def _upload_to_target(task: MirrorTask, path: str) -> str:
                 if target in {"cloudflare", "r2", "cloudflare_r2"}:
                     link = await _upload_to_cloudflare_async(task, upload_path)
                 elif target == "gofile":
-                    _ensure_not_cancelled(task)
-                    link = await asyncio.to_thread(_upload_to_gofile, upload_path, os.path.basename(upload_path))
-                    task.downloaded_bytes = task.total_bytes or task.downloaded_bytes
-                    task.speed = None
-                    await task.update_message(force=True)
+                    link = await _upload_to_gofile_async(task, upload_path)
                 else:
                     link = await _upload_to_pixeldrain_async(task, upload_path)
             except MirrorCancelled:
@@ -1078,6 +1074,96 @@ async def _upload_to_cloudflare_async(task: MirrorTask, filepath: str) -> str:
     public_base = await _get_cloudflare_public_url(account_id, bucket_name)
     public_base = public_base.rstrip("/")
     return f"{public_base}/{encoded_key}"
+
+
+async def _upload_to_gofile_async(task: MirrorTask, filepath: str) -> str:
+    _ensure_not_cancelled(task)
+    if not settings.gofile_token:
+        raise ValueError("GoFile token not configured")
+
+    filename = os.path.basename(filepath)
+    total_size = os.path.getsize(filepath)
+    task.total_bytes = total_size
+    task.downloaded_bytes = 0
+    start = time.time()
+
+    endpoints = settings.gofile_upload_endpoints or ("https://upload.gofile.io/uploadfile",)
+    errors: list[str] = []
+    folder_id = settings.gofile_folder_id.strip()
+    timeout = ClientTimeout(total=1800)
+
+    for endpoint in endpoints:
+        _ensure_not_cancelled(task)
+        headers = {"Authorization": f"Bearer {settings.gofile_token}"}
+
+        async def file_generator():
+            chunk_size = 1024 * 512
+            async with aiofiles.open(filepath, "rb") as f:
+                while True:
+                    if task.cancel_requested:
+                        raise MirrorCancelled(_cancel_reason(task))
+                    chunk = await f.read(chunk_size)
+                    if not chunk:
+                        break
+                    task.downloaded_bytes += len(chunk)
+                    if task.total_bytes:
+                        task.progress = min(99.0, task.downloaded_bytes / task.total_bytes * 100)
+                    elapsed = time.time() - start
+                    if elapsed > 0:
+                        task.speed = task.downloaded_bytes / elapsed
+                    await task.update_message()
+                    _ensure_not_cancelled(task)
+                    yield chunk
+
+        form = aiohttp.FormData()
+        if folder_id:
+            form.add_field("folderId", folder_id)
+        form.add_field("file", file_generator(), filename=filename)
+
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.post(endpoint, data=form, headers=headers) as resp:
+                    text = await resp.text()
+                    if resp.status >= 500:
+                        errors.append(f"{endpoint}: {resp.status} {text}")
+                        print(f"[MIRROR] GoFile server error via {endpoint}: {resp.status} {text}")
+                        continue
+                    if resp.status == 401:
+                        raise ValueError("GoFile authentication failed (401). Check API token.")
+                    try:
+                        json_payload = json.loads(text)
+                    except json.JSONDecodeError:
+                        errors.append(f"{endpoint}: non-JSON response {text}")
+                        print(f"[MIRROR] GoFile non-JSON response via {endpoint}: {text}")
+                        continue
+
+                    status = (json_payload.get("status") or "").lower()
+                    if status and status != "ok":
+                        message = json_payload.get("message") or json_payload.get("error") or text
+                        errors.append(f"{endpoint}: {status} {message}")
+                        print(f"[MIRROR] GoFile API error via {endpoint}: {status} {message}")
+                        continue
+
+                    payload = json_payload.get("data") or {}
+                    link = payload.get("downloadPage") or payload.get("directLink")
+                    if link:
+                        task.downloaded_bytes = task.total_bytes
+                        task.progress = 100.0
+                        task.speed = None
+                        await task.update_message(force=True)
+                        return link
+
+                    errors.append(f"{endpoint}: missing link in response {json_payload}")
+                    print(f"[MIRROR] GoFile missing link via {endpoint}: {json_payload}")
+        except MirrorCancelled:
+            raise
+        except Exception as exc:
+            error_message = f"request error: {exc}"
+            errors.append(f"{endpoint}: {error_message}")
+            print(f"[MIRROR] GoFile request error via {endpoint}: {exc}")
+            continue
+
+    raise ValueError("GoFile upload failed: " + "; ".join(errors))
 
 
 def _upload_to_gofile(filepath: str, filename: str) -> str:

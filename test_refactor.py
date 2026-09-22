@@ -310,5 +310,98 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
         finally:
             if os.path.exists(test_file):
                 os.remove(test_file)
+
+
+class TestSubnetCalculator(unittest.TestCase):
+    def test_subnet_standard(self):
+        from src.modules.system.subnet import calculate_subnet
+        res = calculate_subnet("192.168.1.1", "24")
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["network_address"], "192.168.1.0")
+        self.assertEqual(res["broadcast_address"], "192.168.1.255")
+        self.assertEqual(res["total_hosts"], 254)
+
+    def test_subnet_cidr_notation(self):
+        from src.modules.system.subnet import calculate_subnet
+        res = calculate_subnet("10.0.0.5/16")
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["network_address"], "10.0.0.0")
+        self.assertEqual(res["broadcast_address"], "10.0.255.255")
+
+    def test_subnet_slash31_point_to_point(self):
+        from src.modules.system.subnet import calculate_subnet
+        res = calculate_subnet("10.0.0.0/31")
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["total_hosts"], 2)
+
+    def test_subnet_slash32_single_host(self):
+        from src.modules.system.subnet import calculate_subnet
+        res = calculate_subnet("10.0.0.1/32")
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["total_hosts"], 1)
+
+    def test_subnet_invalid(self):
+        from src.modules.system.subnet import calculate_subnet
+        res = calculate_subnet("999.999.999.999", "24")
+        self.assertIsInstance(res, str)
+
+
+class TestAtomicFallback(unittest.TestCase):
+    def test_save_and_load_json(self):
+        from src.core.fallback import save_json, load_json
+        test_file = "test_data_dir/sample.json"
+        data = {"key": "value", "count": 42}
+        try:
+            save_json(test_file, data)
+            loaded = load_json(test_file, {})
+            self.assertEqual(loaded, data)
+            # Ensure temporary file is cleaned up
+            self.assertFalse(os.path.exists(f"{test_file}.tmp"))
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+            if os.path.exists("test_data_dir"):
+                os.rmdir("test_data_dir")
+
+
+class TestAsyncGoFileUpload(unittest.IsolatedAsyncioTestCase):
+    @patch('src.modules.mirror.handlers.settings')
+    async def test_upload_to_gofile_async_success(self, mock_settings):
+        from src.modules.mirror.handlers import MirrorTask, _upload_to_gofile_async
+        mock_settings.gofile_token = "test_token"
+        mock_settings.gofile_folder_id = ""
+        mock_settings.gofile_upload_endpoints = ("https://upload.gofile.io/uploadfile",)
+
+        mock_app = MagicMock()
+        mock_app.bot = AsyncMock()
+
+        task = MirrorTask(
+            task_id="gofile_task_123",
+            user_id=123,
+            chat_id=456,
+            status_message_id=789,
+            application=mock_app,
+            name="test_doc.pdf",
+        )
+
+        test_file = "test_doc.pdf"
+        with open(test_file, "w") as f:
+            f.write("test gofile document payload")
+
+        try:
+            with patch('aiohttp.ClientSession.post') as mock_post:
+                mock_resp = AsyncMock()
+                mock_resp.status = 200
+                mock_resp.text.return_value = '{"status": "ok", "data": {"downloadPage": "https://gofile.io/d/abc123xyz"}}'
+                mock_post.return_value.__aenter__.return_value = mock_resp
+
+                link = await _upload_to_gofile_async(task, test_file)
+                self.assertEqual(link, "https://gofile.io/d/abc123xyz")
+                self.assertEqual(task.progress, 100.0)
+        finally:
+            if os.path.exists(test_file):
+                os.remove(test_file)
+
+
 if __name__ == '__main__':
     unittest.main()

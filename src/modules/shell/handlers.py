@@ -1,7 +1,7 @@
+import asyncio
 import html
 import os
 import shlex
-import subprocess
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -43,23 +43,32 @@ async def _run_command(update: Update, command: str) -> None:
         return
 
     try:
-        process = subprocess.Popen(
-            _split_command(command),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+        cmd_args = _split_command(command)
+        process = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=shell_session.cwd,
             env=shell_session.env,
         )
-        stdout, stderr = process.communicate(timeout=30)
-        output = stdout if process.returncode == 0 else stderr
-        shell_session.history.append(command)
-        shell_session.history = shell_session.history[-20:]
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=30)
+            stdout = stdout_bytes.decode("utf-8", errors="replace")
+            stderr = stderr_bytes.decode("utf-8", errors="replace")
+            output = stdout if process.returncode == 0 else stderr
+            shell_session.history.append(command)
+            shell_session.history = shell_session.history[-20:]
 
-        if output:
-            await update.effective_message.reply_text(_format_output(output), parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text("✅ Command completed successfully with no output.")
+            if output:
+                await update.effective_message.reply_text(_format_output(output), parse_mode="HTML")
+            else:
+                await update.effective_message.reply_text("✅ Command completed successfully with no output.")
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            await update.effective_message.reply_text("⏱️ Command timed out after 30 seconds.")
     except ValueError as exc:
         await update.effective_message.reply_text(
             f"<b>Invalid Command</b>\n<code>{html.escape(str(exc))}</code>",
@@ -67,8 +76,6 @@ async def _run_command(update: Update, command: str) -> None:
         )
     except FileNotFoundError:
         await update.effective_message.reply_text("❌ Command not found on this host.")
-    except subprocess.TimeoutExpired:
-        await update.effective_message.reply_text("⏱️ Command timed out after 30 seconds.")
     except Exception as exc:
         await update.effective_message.reply_text(
             f"<b>Command Failed</b>\n<code>{html.escape(str(exc))}</code>",

@@ -1,7 +1,7 @@
+import asyncio
 import html
 import os
 import platform
-import subprocess
 import sys
 import time
 
@@ -90,30 +90,24 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 
+def _run_speedtest_sync() -> tuple[float, float]:
+    st = speedtest_lib.Speedtest()
+    st.get_best_server()
+    download = st.download() / 10**6
+    upload = st.upload() / 10**6
+    return download, upload
+
+
 async def speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await guard_command(update, CommandSpec(name="speedtest", disabled_message="Speedtest command is disabled.")):
         return
 
     msg = await update.message.reply_text(
-        "<b>Speed Test</b>\n🌐 Finding the best nearby server.",
+        "<b>Speed Test</b>\n🌐 Finding the best nearby server and testing bandwidth...",
         parse_mode="HTML",
     )
     try:
-        st = speedtest_lib.Speedtest()
-        st.get_best_server()
-
-        await msg.edit_text(
-            "<b>Speed Test</b>\n⬇️ Measuring download speed.",
-            parse_mode="HTML",
-        )
-        download = st.download() / 10**6
-
-        await msg.edit_text(
-            "<b>Speed Test</b>\n⬆️ Measuring upload speed.",
-            parse_mode="HTML",
-        )
-        upload = st.upload() / 10**6
-
+        download, upload = await asyncio.to_thread(_run_speedtest_sync)
         await msg.edit_text(
             f"<b>Speed Test Results</b>\n"
             f"⬇️ Download: <code>{download:.2f} Mbps</code>\n"
@@ -142,29 +136,38 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         count = 4 if os.name == "posix" else 2
-        result = subprocess.run(
-            ["ping", "-c", str(count), host] if os.name == "posix" else ["ping", "-n", str(count), host],
-            capture_output=True,
-            text=True,
-            timeout=15,
+        cmd = ["ping", "-c", str(count), host] if os.name == "posix" else ["ping", "-n", str(count), host]
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
-        if result.returncode == 0:
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=15)
+            stdout = stdout_bytes.decode("utf-8", errors="replace")
+            stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+            if process.returncode == 0:
+                await msg.edit_text(
+                    f"<b>Ping Succeeded</b>\n🎯 Target: <code>{html.escape(host)}</code>\n\n<pre>{html.escape(_truncate_output(stdout.strip()))}</pre>",
+                    parse_mode="HTML",
+                )
+            else:
+                details = stderr.strip() or stdout.strip() or "No error output."
+                await msg.edit_text(
+                    f"<b>Ping Failed</b>\n🎯 Target: <code>{html.escape(host)}</code>\n\n<pre>{html.escape(_truncate_output(details))}</pre>",
+                    parse_mode="HTML",
+                )
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except Exception:
+                pass
             await msg.edit_text(
-                f"<b>Ping Succeeded</b>\n🎯 Target: <code>{html.escape(host)}</code>\n\n<pre>{html.escape(_truncate_output(result.stdout.strip()))}</pre>",
+                f"<b>Ping Timed Out</b>\n🎯 Target: <code>{html.escape(host)}</code>\n⏱️ The host did not respond in time.",
                 parse_mode="HTML",
             )
-        else:
-            details = result.stderr.strip() or result.stdout.strip() or "No error output."
-            await msg.edit_text(
-                f"<b>Ping Failed</b>\n🎯 Target: <code>{html.escape(host)}</code>\n\n<pre>{html.escape(_truncate_output(details))}</pre>",
-                parse_mode="HTML",
-            )
-    except subprocess.TimeoutExpired:
-        await msg.edit_text(
-            f"<b>Ping Timed Out</b>\n🎯 Target: <code>{html.escape(host)}</code>\n⏱️ The host did not respond in time.",
-            parse_mode="HTML",
-        )
     except Exception as exc:
         await msg.edit_text(
             f"<b>Ping Failed</b>\n🎯 Target: <code>{html.escape(host)}</code>\n<code>{html.escape(str(exc))}</code>",
