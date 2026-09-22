@@ -90,8 +90,8 @@ class TestMirrorUpdateMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(button.callback_data, f"{CANCEL_CALLBACK_PREFIX}:abc123xyz456")
 
 class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
-    @patch('src.modules.group.handlers.load_group')
-    @patch('src.modules.group.handlers.is_user_admin')
+    @patch('src.modules.group.locks.load_group', new_callable=AsyncMock)
+    @patch('src.modules.group.locks.is_user_admin', new_callable=AsyncMock)
     async def test_enforce_locks_triggered(self, mock_is_admin, mock_load_group):
         # Mock load_group to return active locks
         mock_load_group.return_value = {
@@ -119,8 +119,8 @@ class TestGroupManagementEnforceLocks(unittest.IsolatedAsyncioTestCase):
         # Verify message was deleted due to audio lock
         mock_update.message.delete.assert_called_once()
 
-    @patch('src.modules.group.handlers.load_group')
-    @patch('src.modules.group.handlers.is_user_admin')
+    @patch('src.modules.group.locks.load_group', new_callable=AsyncMock)
+    @patch('src.modules.group.locks.is_user_admin', new_callable=AsyncMock)
     async def test_enforce_locks_not_triggered(self, mock_is_admin, mock_load_group):
         mock_load_group.return_value = {
             "locks": {"audio": True, "photo": True}
@@ -173,18 +173,18 @@ class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(states["ai"])
         self.assertIn(9999, approved)
 
-    @patch('src.modules.group.handlers.load_json')
-    @patch('src.modules.group.handlers.save_json')
+    @patch('src.modules.group.state.load_json')
+    @patch('src.modules.group.state.save_json')
     async def test_group_management_fallback(self, mock_save_json, mock_load_json):
         # Reset cache in group_management
-        import src.modules.group.handlers as group_management
-        group_management._group_cache = {}
-        group_management.GROUPS_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
+        import src.modules.group.state as group_state
+        group_state._group_cache = {}
+        group_state.GROUPS_COLLECTION.find_one = AsyncMock(side_effect=Exception("DB Down"))
         
         # Mock load_json
         mock_load_json.return_value = {"locks": {"audio": True}}
         
-        group_data = await group_management.load_group(12345)
+        group_data = await group_state.load_group(12345)
         self.assertTrue(group_data["locks"]["audio"])
         mock_load_json.assert_called_with("group_data/12345.json", None)
 
@@ -203,7 +203,7 @@ class TestJsonFallback(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
-    @patch('src.modules.mirror.handlers.settings')
+    @patch('src.modules.mirror.uploaders.settings')
     def test_build_target_queue_with_cloudflare(self, mock_settings):
         from src.modules.mirror.handlers import _build_target_queue
         mock_settings.upload_targets = ("cloudflare", "pixeldrain")
@@ -216,7 +216,7 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
         queue = list(_build_target_queue())
         self.assertEqual(queue, ["cloudflare", "pixeldrain"])
 
-    @patch('src.modules.mirror.handlers.settings')
+    @patch('src.modules.mirror.uploaders.settings')
     def test_build_target_queue_r2_alias(self, mock_settings):
         from src.modules.mirror.handlers import _build_target_queue
         mock_settings.upload_targets = ("r2",)
@@ -228,9 +228,9 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
         queue = list(_build_target_queue())
         self.assertEqual(queue, ["cloudflare"])
 
-    @patch('src.modules.mirror.handlers._get_cloudflare_account_id')
-    @patch('src.modules.mirror.handlers._get_cloudflare_public_url')
-    @patch('src.modules.mirror.handlers.settings')
+    @patch('src.modules.mirror.uploaders._get_cloudflare_account_id')
+    @patch('src.modules.mirror.uploaders._get_cloudflare_public_url')
+    @patch('src.modules.mirror.uploaders.settings')
     async def test_upload_to_cloudflare_rest_fallback(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
         from src.modules.mirror.handlers import MirrorTask, _upload_to_cloudflare_async
         mock_settings.cloudflare_api_token = "cfut_test"
@@ -270,9 +270,9 @@ class TestCloudflareMirrorUploader(unittest.IsolatedAsyncioTestCase):
             if os.path.exists(test_file):
                 os.remove(test_file)
 
-    @patch('src.modules.mirror.handlers._get_cloudflare_account_id')
-    @patch('src.modules.mirror.handlers._get_cloudflare_public_url')
-    @patch('src.modules.mirror.handlers.settings')
+    @patch('src.modules.mirror.uploaders._get_cloudflare_account_id')
+    @patch('src.modules.mirror.uploaders._get_cloudflare_public_url')
+    @patch('src.modules.mirror.uploaders.settings')
     async def test_upload_to_cloudflare_s3_multipart(self, mock_settings, mock_get_pub_url, mock_get_acc_id):
         from src.modules.mirror.handlers import MirrorTask, _upload_to_cloudflare_async
         mock_settings.cloudflare_r2_access_key_id = "test_access_key"
@@ -365,7 +365,7 @@ class TestAtomicFallback(unittest.TestCase):
 
 
 class TestAsyncGoFileUpload(unittest.IsolatedAsyncioTestCase):
-    @patch('src.modules.mirror.handlers.settings')
+    @patch('src.modules.mirror.uploaders.settings')
     async def test_upload_to_gofile_async_success(self, mock_settings):
         from src.modules.mirror.handlers import MirrorTask, _upload_to_gofile_async
         mock_settings.gofile_token = "test_token"
@@ -401,6 +401,36 @@ class TestAsyncGoFileUpload(unittest.IsolatedAsyncioTestCase):
         finally:
             if os.path.exists(test_file):
                 os.remove(test_file)
+
+
+class TestDecomposedHelpers(unittest.TestCase):
+    def test_group_parse_time(self):
+        from src.modules.group.moderation import parse_time
+        self.assertEqual(parse_time("30m"), 1800)
+        self.assertEqual(parse_time("2h"), 7200)
+        self.assertEqual(parse_time("1d"), 86400)
+        self.assertEqual(parse_time("invalid"), 0)
+        self.assertEqual(parse_time(""), 0)
+
+    def test_group_normalize_locks(self):
+        from src.modules.group.state import _normalize_locks
+        locks = {"audio": True, "videonote": True, "invalid_lock": True}
+        normalized = _normalize_locks(locks)
+        self.assertTrue(normalized["audio"])
+        self.assertTrue(normalized["video_note"])
+        self.assertNotIn("invalid_lock", normalized)
+
+    def test_mirror_format_helpers(self):
+        from src.modules.mirror.task import _format_size, _format_speed, _progress_bar, _format_eta
+        self.assertEqual(_format_size(1024), "1.00 KB")
+        self.assertEqual(_format_size(1048576), "1.00 MB")
+        self.assertEqual(_format_size(0), "--")
+        self.assertEqual(_format_speed(1048576), "1.00 MB/s")
+        self.assertEqual(_format_speed(None), "--")
+        self.assertIn("▰", _progress_bar(50.0))
+        self.assertEqual(_format_eta(3665), "1h 01m")
+        self.assertEqual(_format_eta(45), "45s")
+        self.assertEqual(_format_eta(None), "--")
 
 
 if __name__ == '__main__':
